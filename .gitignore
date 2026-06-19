@@ -1,0 +1,32 @@
+# ===== 编译产物 / Build outputs(不上传,可重新编译生成)=====
+/build/
+qt_gui/release/
+qt_gui/debug/
+*.o
+*.obj
+*.exe
+
+# ===== qmake 自动生成的文件 =====
+qt_gui/Makefile
+qt_gui/Makefile.*
+qt_gui/.qmake.stash
+qt_gui/object_script.*
+qt_gui/moc_*.cpp
+qt_gui/ui_*.h
+
+# ===== 课程报告与个人材料(不公开,避免身份泄露)=====
+课程设计报告.docx
+课程设计报告_原始备份.docx
+使用手册.pdf
+~$*.docx
+~$*.doc
+
+# ===== 编辑器 / 工具配置(机器相关,不通用)=====
+.vscode/
+.claude/
+CLAUDE.md
+.clang-format
+
+# ===== 系统垃圾 =====
+.DS_Store
+Thumbs.db

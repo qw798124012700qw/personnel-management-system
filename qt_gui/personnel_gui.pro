@@ -1,4 +1,4 @@
-QT += widgets
+QT += widgets sql
 
 CONFIG += c++17
 CONFIG -= app_bundle

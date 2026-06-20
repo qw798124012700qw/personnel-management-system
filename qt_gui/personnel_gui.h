@@ -42,65 +42,67 @@ struct Employee {
 
 // 主窗口类，负责界面创建、按钮事件、表格刷新和文件读写。
 class MainWindow : public QMainWindow {
-public:
-    MainWindow();  // 构造时搭建整个界面并加载数据文件
+  public:
+    MainWindow(); // 构造时搭建整个界面并加载数据文件
 
-protected:
+  protected:
     // 关闭窗口时若有未保存改动，弹窗询问 保存 / 放弃 / 取消。
     void closeEvent(QCloseEvent *event) override;
 
-private:
-    static QString appStyleSheet();   // 返回全局样式表（统一外观）
+  private:
+    static QString appStyleSheet(); // 返回全局样式表（统一外观）
 
-    QWidget *buildHeader();           // 构建顶部标题栏
-    void buildForm();                 // 构建下方“编辑员工”表单
-    QWidget *buildSearchBox();        // 构建左上“筛选/查询”区
-    void buildButtons();              // 构建操作按钮区
-    void setupButton(QPushButton *button, QStyle::StandardPixmap icon, const QString &variant);  // 统一设置按钮图标与样式
-    Employee formToEmployee() const;  // 把表单内容收集成一个 Employee
-    bool validateEmployee(const Employee &employee, int ignoreIndex = -1);  // 校验表单（含工作证号查重）
-    int currentSourceRow() const;     // 取当前选中行在原始数据中的下标
-    void addEmployee();               // “添加”按钮：新增员工
-    void updateEmployee();            // “修改”按钮：更新选中员工
-    void deleteEmployee();            // “删除”按钮：删除选中员工
-    void fillFormFromCurrentRow(const QModelIndex &current);  // 选中行变化时回填表单
-    void clearForm();                 // 清空表单
-    void refreshTable();              // 用 employees 重建表格模型
-    QStandardItem *makeItem(const QString &text) const;       // 生成只读文本单元格
-    QStandardItem *makeNumberItem(double value) const;        // 生成数值（右对齐）单元格
-    void applyFilter();               // 按关键字筛选表格
-    void salaryRangeSearch();         // 按薪水区间筛选
-    void showDepartmentStatistics();  // 弹窗显示部门人数统计
-    void showSalaryStatistics();      // 弹窗显示薪水统计
-    void loadFromFile();              // 从数据文件读取员工
-    void saveToFile();                // 保存员工到数据文件
+    QWidget *buildHeader();    // 构建顶部标题栏
+    void buildForm();          // 构建下方“编辑员工”表单
+    QWidget *buildSearchBox(); // 构建左上“筛选/查询”区
+    void buildButtons();       // 构建操作按钮区
+    void setupButton(QPushButton *button, QStyle::StandardPixmap icon,
+                     const QString &variant); // 统一设置按钮图标与样式
+    Employee formToEmployee() const;          // 把表单内容收集成一个 Employee
+    bool validateEmployee(const Employee &employee,
+                          int ignoreIndex = -1);             // 校验表单（含工作证号查重）
+    int currentSourceRow() const;                            // 取当前选中行在原始数据中的下标
+    void addEmployee();                                      // “添加”按钮：新增员工
+    void updateEmployee();                                   // “修改”按钮：更新选中员工
+    void deleteEmployee();                                   // “删除”按钮：删除选中员工
+    void fillFormFromCurrentRow(const QModelIndex &current); // 选中行变化时回填表单
+    void clearForm();                                        // 清空表单
+    void refreshTable();                                     // 用 employees 重建表格模型
+    QStandardItem *makeItem(const QString &text) const;      // 生成只读文本单元格
+    QStandardItem *makeNumberItem(double value) const;       // 生成数值（右对齐）单元格
+    void applyFilter();                                      // 按关键字筛选表格
+    void salaryRangeSearch();                                // 按薪水区间筛选
+    void showDepartmentStatistics();                         // 弹窗显示部门人数统计
+    void showSalaryStatistics();                             // 弹窗显示薪水统计
+    void loadFromFile();                                     // 从数据文件读取员工
+    void saveToFile();                                       // 保存员工到数据文件
 
-    QTableView *table = nullptr;             // 员工表格视图
-    QStandardItemModel *model = nullptr;     // 表格数据模型
-    QSortFilterProxyModel *proxy = nullptr;  // 排序/筛选代理模型
-    QGroupBox *formBox = nullptr;            // 表单分组框
-    QGroupBox *buttonBox = nullptr;          // 按钮分组框
-    QLabel *statusLabel = nullptr;           // 状态提示标签
-    QLabel *summaryLabel = nullptr;          // 汇总信息标签
+    QTableView *table = nullptr;            // 员工表格视图
+    QStandardItemModel *model = nullptr;    // 表格数据模型
+    QSortFilterProxyModel *proxy = nullptr; // 排序/筛选代理模型
+    QGroupBox *formBox = nullptr;           // 表单分组框
+    QGroupBox *buttonBox = nullptr;         // 按钮分组框
+    QLabel *statusLabel = nullptr;          // 状态提示标签
+    QLabel *summaryLabel = nullptr;         // 汇总信息标签
 
     // 表单中的各输入控件
-    QLineEdit *nameEdit = nullptr;           // 姓名输入
-    QComboBox *sexBox = nullptr;             // 性别下拉
-    QLineEdit *idEdit = nullptr;             // 身份证号输入
-    QDateEdit *birthdayEdit = nullptr;       // 生日选择
-    QLineEdit *telephoneEdit = nullptr;      // 电话输入
-    QLineEdit *numberEdit = nullptr;         // 工作证号输入
-    QLineEdit *departmentEdit = nullptr;     // 部门输入
-    QLineEdit *postEdit = nullptr;           // 职务输入
-    QDoubleSpinBox *salarySpin = nullptr;    // 薪水输入
-    QLineEdit *addressEdit = nullptr;        // 地址输入
-    QLineEdit *keywordEdit = nullptr;        // 筛选关键字输入
-    QComboBox *queryModeBox = nullptr;       // 筛选方式下拉
+    QLineEdit *nameEdit = nullptr;        // 姓名输入
+    QComboBox *sexBox = nullptr;          // 性别下拉
+    QLineEdit *idEdit = nullptr;          // 身份证号输入
+    QDateEdit *birthdayEdit = nullptr;    // 生日选择
+    QLineEdit *telephoneEdit = nullptr;   // 电话输入
+    QLineEdit *numberEdit = nullptr;      // 工作证号输入
+    QLineEdit *departmentEdit = nullptr;  // 部门输入
+    QLineEdit *postEdit = nullptr;        // 职务输入
+    QDoubleSpinBox *salarySpin = nullptr; // 薪水输入
+    QLineEdit *addressEdit = nullptr;     // 地址输入
+    QLineEdit *keywordEdit = nullptr;     // 筛选关键字输入
+    QComboBox *queryModeBox = nullptr;    // 筛选方式下拉
 
-    QVector<Employee> employees;             // 内存中的全部员工数据
-    bool dirty = false;                      // 是否有未保存改动（增删改后置 true，存/读后清零）
+    QVector<Employee> employees; // 内存中的全部员工数据
+    bool dirty = false;          // 是否有未保存改动（增删改后置 true，存/读后清零）
     // Qt 程序在 qt_gui 目录运行，因此用 ../data 访问统一数据文件。
-    const QString dataFile = "../data/employees.txt";
+    const QString dataFile = "../data/employees.db";
 };
 
 #endif

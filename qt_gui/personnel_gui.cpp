@@ -27,6 +27,8 @@
 #include <QRegularExpressionValidator>
 #include <QSize>
 #include <QSortFilterProxyModel>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QStandardItem>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -34,19 +36,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-// 保存文本文件时使用 | 分隔字段，因此需要转义字段中的 | 和 \。
-static QString escapeField(const QString &value) {
-    QString result;
-    for (QChar ch : value) {
-        if (ch == '\\' || ch == '|') {
-            result.append('\\');
-        }
-        result.append(ch);
-    }
-    return result;
-}
-
-// 读取文本文件时按 | 拆分，同时识别上面的反斜杠转义。
+// 读取旧文本数据文件时按 | 拆分，同时识别反斜杠转义(仅用于首次从 .txt 自动迁移到数据库)。
 static QStringList splitRecordLine(const QString &line) {
     QStringList fields;
     QString current;
@@ -785,65 +775,122 @@ void MainWindow::showSalaryStatistics() {
     QMessageBox::information(this, "薪水统计", message);
 }
 
-// 从统一数据文件读取员工信息。
+// 从 SQLite 数据库读取员工(与控制台版共用同一数据库)。库为空时自动从旧的 .txt 文本文件迁移。
 void MainWindow::loadFromFile() {
     employees.clear();
-    QFile file(dataFile);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        statusLabel->setText("未找到数据文件，将从空数据开始");
-        return;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms");
+        db.setDatabaseName(dataFile);
+        if (!db.open()) {
+            statusLabel->setText("无法打开数据库");
+        } else {
+            QSqlQuery q(db);
+            q.exec("CREATE TABLE IF NOT EXISTS employees (number TEXT PRIMARY KEY, name TEXT, "
+                   "sex TEXT, id TEXT, birthday TEXT, telephone TEXT, address TEXT, salary TEXT, "
+                   "post TEXT, department TEXT);");
+            q.exec("SELECT name, sex, id, birthday, telephone, number, address, salary, post, "
+                   "department FROM employees;");
+            while (q.next()) {
+                Employee e;
+                e.name = q.value(0).toString();
+                e.sex = q.value(1).toString();
+                e.id = q.value(2).toString();
+                e.birthday = q.value(3).toString();
+                e.telephone = q.value(4).toString();
+                e.number = q.value(5).toString();
+                e.address = q.value(6).toString();
+                e.salary = q.value(7).toDouble();
+                e.post = q.value(8).toString();
+                e.department = q.value(9).toString();
+                employees.append(e);
+            }
+            db.close();
+        }
     }
+    QSqlDatabase::removeDatabase("pms");
 
-    QTextStream in(&file);
-    in.setCodec("UTF-8");
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty()) {
-            continue;
+    // 数据库为空 -> 尝试从旧的同名 .txt 文本文件迁移。
+    if (employees.isEmpty()) {
+        QString txt = dataFile;
+        if (txt.endsWith(".db")) {
+            txt.chop(3);
+            txt += ".txt";
         }
-        QStringList fields = splitRecordLine(line);
-        if (fields.size() != 10) {
-            continue;
+        QFile file(txt);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            in.setCodec("UTF-8");
+            while (!in.atEnd()) {
+                QString line = in.readLine().trimmed();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                QStringList f = splitRecordLine(line);
+                if (f.size() != 10) {
+                    continue;
+                }
+                Employee e;
+                e.name = f[0];
+                e.sex = f[1];
+                e.id = f[2];
+                e.birthday = f[3];
+                e.telephone = f[4];
+                e.number = f[5];
+                e.address = f[6];
+                e.salary = f[7].toDouble();
+                e.post = f[8];
+                e.department = f[9];
+                employees.append(e);
+            }
+            file.close();
+            if (!employees.isEmpty()) {
+                saveToFile(); // 写入数据库,完成迁移
+                statusLabel->setText(
+                    QString("已从文本文件迁移 %1 条到数据库").arg(employees.size()));
+                return;
+            }
         }
-        Employee employee;
-        employee.name = fields[0];
-        employee.sex = fields[1];
-        employee.id = fields[2];
-        employee.birthday = fields[3];
-        employee.telephone = fields[4];
-        employee.number = fields[5];
-        employee.address = fields[6];
-        employee.salary = fields[7].toDouble();
-        employee.post = fields[8];
-        employee.department = fields[9];
-        employees.append(employee);
     }
-    dirty = false; // 已与文件同步，清除脏标志
-    statusLabel->setText(QString("已读取 %1 条员工信息").arg(employees.size()));
+    dirty = false;
+    statusLabel->setText(QString("已从数据库读取 %1 条员工信息").arg(employees.size()));
 }
 
-// 保存到统一数据文件，格式与控制台版本保持一致。
+// 保存到 SQLite 数据库：清空表后整表重写(放在事务里)。与控制台版共用同一数据库。
 void MainWindow::saveToFile() {
-    QFile file(dataFile);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "保存失败", "无法打开数据文件。");
+    QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms");
+    db.setDatabaseName(dataFile);
+    if (!db.open()) {
+        QMessageBox::warning(this, "保存失败", "无法打开数据库。");
+        QSqlDatabase::removeDatabase("pms");
         return;
     }
-    QTextStream out(&file);
-    out.setCodec("UTF-8");
-    for (const Employee &employee : employees) {
-        QStringList fields;
-        fields << employee.name << employee.sex << employee.id << employee.birthday
-               << employee.telephone << employee.number << employee.address
-               << QString::number(employee.salary, 'f', 2) << employee.post << employee.department;
-        for (int i = 0; i < fields.size(); ++i) {
-            if (i > 0) {
-                out << '|';
-            }
-            out << escapeField(fields[i]);
+    {
+        QSqlQuery q(db);
+        q.exec(
+            "CREATE TABLE IF NOT EXISTS employees (number TEXT PRIMARY KEY, name TEXT, sex TEXT, "
+            "id TEXT, birthday TEXT, telephone TEXT, address TEXT, salary TEXT, post TEXT, "
+            "department TEXT);");
+        db.transaction();
+        q.exec("DELETE FROM employees;");
+        q.prepare("INSERT INTO employees (number, name, sex, id, birthday, telephone, address, "
+                  "salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);");
+        for (const Employee &e : employees) {
+            q.addBindValue(e.number);
+            q.addBindValue(e.name);
+            q.addBindValue(e.sex);
+            q.addBindValue(e.id);
+            q.addBindValue(e.birthday);
+            q.addBindValue(e.telephone);
+            q.addBindValue(e.address);
+            q.addBindValue(QString::number(e.salary, 'f', 2));
+            q.addBindValue(e.post);
+            q.addBindValue(e.department);
+            q.exec();
         }
-        out << '\n';
+        db.commit();
     }
-    dirty = false; // 已写入文件，清除脏标志
-    statusLabel->setText(QString("已保存 %1 条员工信息").arg(employees.size()));
+    db.close();
+    QSqlDatabase::removeDatabase("pms");
+    dirty = false;
+    statusLabel->setText(QString("已保存 %1 条员工信息到数据库").arg(employees.size()));
 }

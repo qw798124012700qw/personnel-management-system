@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <sqlite3.h> // SQLite 嵌入式数据库 C API
+
 using namespace std;
 
 namespace {
@@ -609,59 +611,141 @@ void EmployeeList::deleteAll() {
     }
 }
 
-// 保存到文本文件，每个员工占一行。
-void EmployeeList::save() const {
-    ofstream out(fileName_);
-    if (!out) {
-        cout << "无法打开文件 " << fileName_ << " 进行保存。\n";
-        return;
+// ============ SQLite 数据库存储 ============
+
+// 员工表结构：以工作证号(number)为主键(天然保证唯一),其余字段各占一列,便于按列查询。
+static const char *kSchema =
+    "CREATE TABLE IF NOT EXISTS employees ("
+    "number TEXT PRIMARY KEY, name TEXT, sex TEXT, id TEXT, birthday TEXT, "
+    "telephone TEXT, address TEXT, salary TEXT, post TEXT, department TEXT);";
+
+// 由数据库路径(.db)推导出旧文本文件路径(.txt),用于首次运行时自动迁移。
+static string textPathOf(const string &dbPath) {
+    if (dbPath.size() >= 3 && dbPath.compare(dbPath.size() - 3, 3, ".db") == 0) {
+        return dbPath.substr(0, dbPath.size() - 3) + ".txt";
     }
-    for (const Employee &employee : employees_) {
-        out << employee.serialize() << '\n';
-    }
-    cout << "已保存 " << employees_.size() << " 条员工信息到 " << fileName_ << "。\n";
+    return dbPath + ".txt";
 }
 
-// 从文本文件读取员工，跳过格式错误或工作证号重复的记录。
-void EmployeeList::load() {
-    ifstream in(fileName_);
-    if (!in) {
-        cout << "数据文件 " << fileName_ << " 不存在，将从空列表开始。\n";
+// 保存：清空表后把全部员工写回数据库,整个过程放在一个事务里保证一致性。
+void EmployeeList::save() const {
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
+        cout << "无法打开数据库 " << fileName_ << " 进行保存。\n";
+        sqlite3_close(db);
         return;
     }
-    // loaded 暂存成功解析的员工；lineNumber 记录行号便于报错；skipped 统计被跳过的坏行。
-    vector<Employee> loaded;
-    numberIndex_.clear(); // 边读边用哈希索引查重（整体 O(n)）
-    string line;
-    int lineNumber = 0;
-    int skipped = 0;
-    while (getline(in, line)) {
-        ++lineNumber;
-        line = trim(line);
-        if (line.empty()) {
-            continue;
-        }
-        try {
-            // 解析这一行；字段数、日期或薪水非法时 deserialize 会抛异常。
-            Employee employee = Employee::deserialize(line);
-            // 用哈希索引 O(1) 判断工作证号是否重复（替代原来的 O(n) 线性扫描，整体由 O(n^2) 降到
-            // O(n)）。
-            if (numberIndex_.count(employee.number()) == 0) {
-                numberIndex_[employee.number()] = loaded.size();
-                loaded.push_back(employee);
-            } else {
-                ++skipped;
-                cout << "跳过第 " << lineNumber << " 行：工作证号重复。\n";
-            }
-        } catch (const exception &ex) {
-            // 捕获异常并跳过这一行，不影响其余正常记录的读取。
-            ++skipped;
-            cout << "跳过第 " << lineNumber << " 行：" << ex.what() << "。\n";
-        }
+    sqlite3_exec(db, kSchema, nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "DELETE FROM employees;", nullptr, nullptr, nullptr);
+
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "INSERT INTO employees (number, name, sex, id, birthday, telephone, "
+                      "address, salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        cout << "保存失败：" << sqlite3_errmsg(db) << "\n";
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+        return;
     }
-    // 全部解析完成后再整体替换，避免读到一半就破坏已有数据。
+    for (const Employee &e : employees_) {
+        // SQLITE_TRANSIENT 让 SQLite 立即复制字符串,避免临时量悬空。
+        const string bd = e.birthday().toString();
+        sqlite3_bind_text(stmt, 1, e.number().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, e.name().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, e.sex().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, e.id().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 5, bd.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 6, e.telephone().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 7, e.address().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 8, e.salary().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 9, e.post().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 10, e.department().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    cout << "已保存 " << employees_.size() << " 条员工信息到数据库 " << fileName_ << "。\n";
+}
+
+// 读取：从数据库读取全部员工。首次运行(库为空)时自动从旧的同名 .txt 文本文件迁移并写回数据库。
+void EmployeeList::load() {
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
+        cout << "无法打开数据库 " << fileName_ << "：" << sqlite3_errmsg(db) << "\n";
+        sqlite3_close(db);
+        return;
+    }
+    sqlite3_exec(db, kSchema, nullptr, nullptr, nullptr); // 首次运行自动建表
+
+    vector<Employee> loaded;
+    numberIndex_.clear();
+    int skipped = 0;
+
+    // 逐行读取;把各列按序列化顺序拼成一行,复用 deserialize 的字段校验。
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT name, sex, id, birthday, telephone, number, address, salary, "
+                      "post, department FROM employees;";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            stringstream ss;
+            for (int i = 0; i < 10; ++i) {
+                const unsigned char *t = sqlite3_column_text(stmt, i);
+                if (i > 0) {
+                    ss << '|';
+                }
+                ss << escapeField(t ? reinterpret_cast<const char *>(t) : "");
+            }
+            try {
+                Employee employee = Employee::deserialize(ss.str());
+                if (numberIndex_.count(employee.number()) == 0) {
+                    numberIndex_[employee.number()] = loaded.size();
+                    loaded.push_back(employee);
+                } else {
+                    ++skipped;
+                }
+            } catch (const exception &) {
+                ++skipped;
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
     employees_ = loaded;
-    cout << "已读取 " << employees_.size() << " 条员工信息";
+
+    // 数据库为空但存在旧文本文件 -> 自动迁移:读入文本后写回数据库。
+    if (employees_.empty()) {
+        ifstream in(textPathOf(fileName_));
+        if (in) {
+            string line;
+            while (getline(in, line)) {
+                line = trim(line);
+                if (line.empty()) {
+                    continue;
+                }
+                try {
+                    Employee employee = Employee::deserialize(line);
+                    if (numberIndex_.count(employee.number()) == 0) {
+                        numberIndex_[employee.number()] = employees_.size();
+                        employees_.push_back(employee);
+                    }
+                } catch (const exception &) {
+                }
+            }
+            if (!employees_.empty()) {
+                save(); // 写入数据库,完成迁移
+                cout << "(已从文本文件 " << textPathOf(fileName_) << " 自动迁移 "
+                     << employees_.size() << " 条到数据库)\n";
+                return;
+            }
+        }
+        cout << "数据库为空，将从空列表开始。\n";
+        return;
+    }
+
+    cout << "已从数据库读取 " << employees_.size() << " 条员工信息";
     if (skipped > 0) {
         cout << "，跳过 " << skipped << " 条异常记录";
     }

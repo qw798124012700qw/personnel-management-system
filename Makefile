@@ -12,6 +12,7 @@ CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic -g
 SRC      := src/main.cpp src/personnel_system.cpp
 HDR      := src/personnel_system.h
 BIN      := build/personnel_system.exe
+LIBS     := -lsqlite3   # 链接 SQLite 嵌入式数据库
 
 # Qt 图形界面版（Qt5，qmake 名为 qmake-qt5）
 GUI_DIR     := qt_gui
@@ -25,7 +26,7 @@ all: $(BIN)
 
 $(BIN): $(SRC) $(HDR)
 	-mkdir -p build
-	$(CXX) $(CXXFLAGS) $(SRC) -o $(BIN)
+	$(CXX) $(CXXFLAGS) $(SRC) -o $(BIN) $(LIBS)
 
 run: all
 	-mkdir -p data
@@ -40,6 +41,8 @@ gui:
 	cd $(GUI_DIR) && qmake-qt5 personnel_gui.pro && mingw32-make
 	-mkdir -p $(GUI_DIR)/release/platforms
 	cp "$(QT_PLUGINS)/platforms/qwindows.dll" $(GUI_DIR)/release/platforms/
+	-mkdir -p $(GUI_DIR)/release/sqldrivers
+	cp "$(QT_PLUGINS)/sqldrivers/qsqlite.dll" $(GUI_DIR)/release/sqldrivers/
 
 # 以 qt_gui 为工作目录运行，使 ../data/employees.txt 指向项目根 data/（与控制台版共用）。
 run-gui: gui

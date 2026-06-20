@@ -6,6 +6,13 @@ qt_gui/debug/
 *.obj
 *.exe
 
+# ===== SQLite 数据库(运行时生成；首次由 data/employees.txt 自动迁移)=====
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+qt_gui/data/
+
 # ===== qmake 自动生成的文件 =====
 qt_gui/Makefile
 qt_gui/Makefile.*

@@ -20,7 +20,7 @@ int main() {
 
     try {
         // 程序启动时自动读取数据文件，退出时可选择是否保存。
-        EmployeeList employees("data/employees.txt");
+        EmployeeList employees("data/employees.db");
         employees.load();
 
         // 主循环：显示菜单 → 读取用户选择(0-11) → 调用对应功能；选 0 时询问是否保存并退出。
@@ -28,45 +28,45 @@ int main() {
             printMenu();
             int choice = readMenuChoice(0, 11);
             switch (choice) {
-                case 1:
-                    employees.add();
-                    break;
-                case 2:
-                    employees.remove();
-                    break;
-                case 3:
-                    employees.deleteAll();
-                    break;
-                case 4:
-                    employees.display();
-                    break;
-                case 5:
-                    employees.find();
-                    break;
-                case 6:
-                    employees.modify();
-                    break;
-                case 7:
+            case 1:
+                employees.add();
+                break;
+            case 2:
+                employees.remove();
+                break;
+            case 3:
+                employees.deleteAll();
+                break;
+            case 4:
+                employees.display();
+                break;
+            case 5:
+                employees.find();
+                break;
+            case 6:
+                employees.modify();
+                break;
+            case 7:
+                employees.save();
+                break;
+            case 8:
+                employees.load();
+                break;
+            case 9:
+                employees.advancedSearch();
+                break;
+            case 10:
+                employees.sortMenu();
+                break;
+            case 11:
+                employees.statisticsMenu();
+                break;
+            case 0:
+                if (askYesNo("是否保存后退出? (y/n): ")) {
                     employees.save();
-                    break;
-                case 8:
-                    employees.load();
-                    break;
-                case 9:
-                    employees.advancedSearch();
-                    break;
-                case 10:
-                    employees.sortMenu();
-                    break;
-                case 11:
-                    employees.statisticsMenu();
-                    break;
-                case 0:
-                    if (askYesNo("是否保存后退出? (y/n): ")) {
-                        employees.save();
-                    }
-                    std::cout << "系统已退出。\n";
-                    return 0;
+                }
+                std::cout << "系统已退出。\n";
+                return 0;
             }
         }
     } catch (const std::runtime_error &ex) {

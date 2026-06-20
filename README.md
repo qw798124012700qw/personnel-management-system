@@ -43,7 +43,7 @@
 
 **统计与持久化**
 - 📊 **统计分析**:部门人数;薪水总额 / 平均 / 最高 / 最低
-- 💾 **文件持久化**:文本文件存储,**两种界面共用同一份数据**;读取时自动跳过格式错误 / 重复记录
+- 💾 **SQLite 数据库持久化**:控制台版用 SQLite C API、图形界面版用 Qt SQL 模块,**两种界面共用同一个数据库** `data/employees.db`;**首次运行自动从旧文本文件迁移**;读取时自动跳过异常记录
 
 **图形界面专属**
 - 🖱️ 表格点击行即载入表单编辑、点列头排序;关键字即时筛选;统计结果弹窗
@@ -62,7 +62,7 @@
 
 技术点:运算符重载(`<<` / `>>`)、函数重载、`std::sort` + 静态比较函数、异常处理(文件容错读取)。
 
-图形界面版使用 `QMainWindow` + `QTableView` / `QStandardItemModel` / `QSortFilterProxyModel`,通过信号槽连接按钮事件,与控制台版**共用同一数据文件格式**。
+图形界面版使用 `QMainWindow` + `QTableView` / `QStandardItemModel` / `QSortFilterProxyModel`,通过信号槽连接按钮事件,与控制台版**共用同一个 SQLite 数据库**(图形界面通过 Qt SQL 模块的 `QSQLITE` 驱动访问)。
 
 ## 🛠️ 技术栈
 
@@ -70,6 +70,7 @@
 | --- | --- |
 | 语言 | C++17(`vector` / `string` / 文件流 / 异常) |
 | 图形界面 | Qt 5 Widgets(`qmake` 构建) |
+| 数据存储 | SQLite 3(控制台用 C API,图形界面用 Qt 5 Sql 的 `QSQLITE` 驱动) |
 | 设计 | 面向对象、MVC(模型 / 视图 / 代理) |
 
 ## 📁 项目结构
@@ -85,7 +86,7 @@
 │   ├── personnel_gui.h
 │   ├── personnel_gui.cpp
 │   └── personnel_gui.pro
-├── data/employees.txt    示例数据(120 条)
+├── data/employees.txt    种子数据(120 条；首次运行自动导入 SQLite 数据库)
 ├── Makefile              构建脚本
 ├── 使用手册.md / 运行说明.md
 ├── architecture.png      系统框架图
@@ -98,7 +99,8 @@
 ### 控制台版
 
 ```sh
-g++ -std=c++17 -Wall -Wextra src/main.cpp src/personnel_system.cpp -o personnel_system
+# 需安装 SQLite 开发库(头文件 sqlite3.h + 链接 -lsqlite3)
+g++ -std=c++17 -Wall -Wextra src/main.cpp src/personnel_system.cpp -o personnel_system -lsqlite3
 ./personnel_system
 ```
 
@@ -108,9 +110,11 @@ g++ -std=c++17 -Wall -Wextra src/main.cpp src/personnel_system.cpp -o personnel_
 
 ```sh
 cd qt_gui
-qmake personnel_gui.pro
-make            # Windows(MinGW)上用 mingw32-make
+qmake personnel_gui.pro    # .pro 已含 QT += sql
+make                       # Windows(MinGW)上用 mingw32-make
 ```
+
+> 图形界面通过 Qt SQL 模块访问数据库;`QSQLITE` 驱动随 Qt 提供,运行时需位于 `sqldrivers/`(`make gui` 会自动部署)。
 
 ## 📂 数据文件格式
 

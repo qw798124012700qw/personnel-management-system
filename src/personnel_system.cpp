@@ -25,9 +25,8 @@ string trim(const string &value) {
 
 // 英文内容统一转小写，便于做不区分大小写的查询。
 string lowerCopy(string value) {
-    transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(tolower(ch));
-    });
+    transform(value.begin(), value.end(), value.begin(),
+              [](unsigned char ch) { return static_cast<char>(tolower(ch)); });
     return value;
 }
 
@@ -129,7 +128,7 @@ string readRequired(const string &prompt) {
     }
 }
 
-}  // namespace
+} // namespace
 
 // 统一处理 y/n 确认，删除、清空、退出保存都会用到。
 bool askYesNo(const string &prompt) {
@@ -312,13 +311,8 @@ void Employee::input() {
 
 // 用表格形式输出主要信息，适合列表展示。
 void Employee::printBrief(ostream &out, int index) const {
-    out << left << setw(5) << index
-        << setw(14) << name_
-        << setw(22) << id_
-        << setw(16) << number_
-        << setw(14) << birthday_.toString()
-        << setw(16) << department_
-        << '\n';
+    out << left << setw(5) << index << setw(14) << name_ << setw(22) << id_ << setw(16) << number_
+        << setw(14) << birthday_.toString() << setw(16) << department_ << '\n';
 }
 
 // 输出完整信息，适合查询结果展示。
@@ -337,8 +331,8 @@ void Employee::printDetail(ostream &out) const {
 
 // 将员工对象转换成一行文本，写入 data/employees.txt。
 string Employee::serialize() const {
-    vector<string> fields = {
-        name_, sex_, id_, birthday_.toString(), telephone_, number_, address_, salary_, post_, department_};
+    vector<string> fields = {name_,    sex_,    id_,   birthday_.toString(), telephone_, number_,
+                             address_, salary_, post_, department_};
     stringstream ss;
     for (size_t i = 0; i < fields.size(); ++i) {
         if (i > 0) {
@@ -391,36 +385,36 @@ void Employee::modify() {
         }
         // 修改选中的字段，每一项都复用与录入时相同的校验函数。
         switch (choice) {
-            case 1:
-                name_ = readRequired("新姓名: ");
-                break;
-            case 2:
-                sex_ = readSex("新性别(男/女): ");
-                break;
-            case 3:
-                id_ = readIdentity("新身份证号码: ");
-                break;
-            case 4:
-                birthday_.input("新生日(YYYY-MM-DD): ");
-                break;
-            case 5:
-                telephone_ = readTelephone("新电话号码: ");
-                break;
-            case 6:
-                number_ = readRequired("新工作证号: ");
-                break;
-            case 7:
-                department_ = readRequired("新部门: ");
-                break;
-            case 8:
-                post_ = readRequired("新职务: ");
-                break;
-            case 9:
-                salary_ = readSalary("新薪水: ");
-                break;
-            case 10:
-                address_ = readRequired("新家庭地址: ");
-                break;
+        case 1:
+            name_ = readRequired("新姓名: ");
+            break;
+        case 2:
+            sex_ = readSex("新性别(男/女): ");
+            break;
+        case 3:
+            id_ = readIdentity("新身份证号码: ");
+            break;
+        case 4:
+            birthday_.input("新生日(YYYY-MM-DD): ");
+            break;
+        case 5:
+            telephone_ = readTelephone("新电话号码: ");
+            break;
+        case 6:
+            number_ = readRequired("新工作证号: ");
+            break;
+        case 7:
+            department_ = readRequired("新部门: ");
+            break;
+        case 8:
+            post_ = readRequired("新职务: ");
+            break;
+        case 9:
+            salary_ = readSalary("新薪水: ");
+            break;
+        case 10:
+            address_ = readRequired("新家庭地址: ");
+            break;
         }
         cout << "修改成功。\n";
     }
@@ -460,7 +454,8 @@ string Employee::readIdentity(const string &prompt) {
         bool charsOk = true;
         for (size_t i = 0; i < value.size(); ++i) {
             char ch = value[i];
-            if (!isdigit(static_cast<unsigned char>(ch)) && !(i == value.size() - 1 && (ch == 'X' || ch == 'x'))) {
+            if (!isdigit(static_cast<unsigned char>(ch)) &&
+                !(i == value.size() - 1 && (ch == 'X' || ch == 'x'))) {
                 charsOk = false;
                 break;
             }
@@ -519,11 +514,12 @@ EmployeeList::EmployeeList(string fileName) : fileName_(std::move(fileName)) {}
 void EmployeeList::add() {
     Employee employee;
     employee.input();
-    if (findByNumber(employee.number()) != employees_.end()) {
+    if (findByNumber(employee.number()) != employees_.end()) { // O(1) 查重
         cout << "工作证号已存在，添加失败。\n";
         return;
     }
     employees_.push_back(employee);
+    numberIndex_[employee.number()] = employees_.size() - 1; // 增量维护索引
     cout << "添加成功。\n";
 }
 
@@ -560,7 +556,7 @@ void EmployeeList::modify() {
     if (employee == nullptr) {
         return;
     }
-    string oldNumber = employee->number();  // 记下旧工作证号，便于改重复后回滚
+    string oldNumber = employee->number(); // 记下旧工作证号，便于改重复后回滚
     employee->modify();
     // 修改后检查新的工作证号是否与其他员工重复。
     bool duplicated = false;
@@ -574,6 +570,7 @@ void EmployeeList::modify() {
         cout << "修改后的工作证号与其他员工重复，已恢复原工作证号。\n";
         employee->modifyNumberOnly(oldNumber);
     }
+    rebuildIndex(); // 修改可能改动了工作证号，重建索引
 }
 
 // 删除时先查找，再让用户确认，避免误删。
@@ -590,6 +587,7 @@ void EmployeeList::remove() {
     }
     if (askYesNo("确认删除员工 " + employees_[index].name() + " ? (y/n): ")) {
         employees_.erase(employees_.begin() + static_cast<long>(index));
+        rebuildIndex(); // 删除导致后续下标移动，重建索引
         cout << "删除成功。\n";
     } else {
         cout << "已取消删除。\n";
@@ -604,6 +602,7 @@ void EmployeeList::deleteAll() {
     }
     if (askYesNo("确认清空全部员工信息? 此操作不可撤销 (y/n): ")) {
         employees_.clear();
+        numberIndex_.clear();
         cout << "全部员工信息已清空。\n";
     } else {
         cout << "已取消清空。\n";
@@ -632,6 +631,7 @@ void EmployeeList::load() {
     }
     // loaded 暂存成功解析的员工；lineNumber 记录行号便于报错；skipped 统计被跳过的坏行。
     vector<Employee> loaded;
+    numberIndex_.clear(); // 边读边用哈希索引查重（整体 O(n)）
     string line;
     int lineNumber = 0;
     int skipped = 0;
@@ -644,15 +644,10 @@ void EmployeeList::load() {
         try {
             // 解析这一行；字段数、日期或薪水非法时 deserialize 会抛异常。
             Employee employee = Employee::deserialize(line);
-            // 检查工作证号是否与已读入的员工重复。
-            bool duplicated = false;
-            for (size_t i = 0; i < loaded.size(); ++i) {
-                if (loaded[i].number() == employee.number()) {
-                    duplicated = true;
-                    break;
-                }
-            }
-            if (!duplicated) {
+            // 用哈希索引 O(1) 判断工作证号是否重复（替代原来的 O(n) 线性扫描，整体由 O(n^2) 降到
+            // O(n)）。
+            if (numberIndex_.count(employee.number()) == 0) {
+                numberIndex_[employee.number()] = loaded.size();
                 loaded.push_back(employee);
             } else {
                 ++skipped;
@@ -675,6 +670,7 @@ void EmployeeList::load() {
 
 void EmployeeList::sortByNumber() {
     sort(employees_.begin(), employees_.end(), compareByNumber);
+    rebuildIndex(); // 排序改变了下标，重建索引
     cout << "已按工作证号排序。\n";
 }
 
@@ -691,15 +687,15 @@ void EmployeeList::advancedSearch() const {
             return;
         }
         switch (choice) {
-            case 1:
-                searchByDepartment();
-                break;
-            case 2:
-                searchBySalaryRange();
-                break;
-            case 3:
-                searchByPostKeyword();
-                break;
+        case 1:
+            searchByDepartment();
+            break;
+        case 2:
+            searchBySalaryRange();
+            break;
+        case 3:
+            searchByPostKeyword();
+            break;
         }
     }
 }
@@ -721,19 +717,20 @@ void EmployeeList::sortMenu() {
             return;
         }
         switch (choice) {
-            case 1:
-                sort(employees_.begin(), employees_.end(), compareByNumber);
-                cout << "已按工作证号升序排序。\n";
-                break;
-            case 2:
-                sort(employees_.begin(), employees_.end(), compareByBirthday);
-                cout << "已按生日升序排序。\n";
-                break;
-            case 3:
-                sort(employees_.begin(), employees_.end(), compareBySalaryDesc);
-                cout << "已按薪水降序排序。\n";
-                break;
+        case 1:
+            sort(employees_.begin(), employees_.end(), compareByNumber);
+            cout << "已按工作证号升序排序。\n";
+            break;
+        case 2:
+            sort(employees_.begin(), employees_.end(), compareByBirthday);
+            cout << "已按生日升序排序。\n";
+            break;
+        case 3:
+            sort(employees_.begin(), employees_.end(), compareBySalaryDesc);
+            cout << "已按薪水降序排序。\n";
+            break;
         }
+        rebuildIndex(); // 排序改变了下标，重建索引
         display();
     }
 }
@@ -754,12 +751,12 @@ void EmployeeList::statisticsMenu() const {
             return;
         }
         switch (choice) {
-            case 1:
-                countByDepartment();
-                break;
-            case 2:
-                salaryStatistics();
-                break;
+        case 1:
+            countByDepartment();
+            break;
+        case 2:
+            salaryStatistics();
+            break;
         }
     }
 }
@@ -876,39 +873,47 @@ void EmployeeList::salaryStatistics() const {
             minIndex = static_cast<int>(i);
         }
     }
-    double average = total / employees_.size();  // 平均薪水 = 总额 / 人数
+    double average = total / employees_.size(); // 平均薪水 = 总额 / 人数
 
     cout << fixed << setprecision(2);
     cout << "\n薪水统计\n";
     cout << "员工总数: " << employees_.size() << '\n';
     cout << "薪水总额: " << total << '\n';
     cout << "平均薪水: " << average << '\n';
-    cout << "最高薪水: " << employees_[static_cast<size_t>(maxIndex)].name()
-         << " (" << employees_[static_cast<size_t>(maxIndex)].salaryValue() << ")\n";
-    cout << "最低薪水: " << employees_[static_cast<size_t>(minIndex)].name()
-         << " (" << employees_[static_cast<size_t>(minIndex)].salaryValue() << ")\n";
+    cout << "最高薪水: " << employees_[static_cast<size_t>(maxIndex)].name() << " ("
+         << employees_[static_cast<size_t>(maxIndex)].salaryValue() << ")\n";
+    cout << "最低薪水: " << employees_[static_cast<size_t>(minIndex)].name() << " ("
+         << employees_[static_cast<size_t>(minIndex)].salaryValue() << ")\n";
     cout.unsetf(ios::floatfield);
     cout << setprecision(6);
 }
 
-// 按工作证号查找，返回迭代器；添加和查重时会用到。
-vector<Employee>::iterator EmployeeList::findByNumber(const string &number) {
-    for (vector<Employee>::iterator it = employees_.begin(); it != employees_.end(); ++it) {
-        if (it->number() == number) {
-            return it;
-        }
+// 根据当前 employees_ 重建“工作证号 -> 下标”哈希索引。
+// 任何改变元素位置的操作（删除、排序、整体加载）之后调用它即可保持索引正确。
+void EmployeeList::rebuildIndex() {
+    numberIndex_.clear();
+    numberIndex_.reserve(employees_.size());
+    for (size_t i = 0; i < employees_.size(); ++i) {
+        numberIndex_[employees_[i].number()] = i;
     }
-    return employees_.end();
 }
 
-// const 版本用于只读场景。
-vector<Employee>::const_iterator EmployeeList::findByNumber(const string &number) const {
-    for (vector<Employee>::const_iterator it = employees_.begin(); it != employees_.end(); ++it) {
-        if (it->number() == number) {
-            return it;
-        }
+// 按工作证号查找：借助哈希索引 O(1) 定位（添加、查重时使用）。
+vector<Employee>::iterator EmployeeList::findByNumber(const string &number) {
+    auto it = numberIndex_.find(number);
+    if (it == numberIndex_.end()) {
+        return employees_.end();
     }
-    return employees_.end();
+    return employees_.begin() + static_cast<long>(it->second);
+}
+
+// const 版本：同样用哈希索引 O(1) 查找。
+vector<Employee>::const_iterator EmployeeList::findByNumber(const string &number) const {
+    auto it = numberIndex_.find(number);
+    if (it == numberIndex_.end()) {
+        return employees_.end();
+    }
+    return employees_.begin() + static_cast<long>(it->second);
 }
 
 // 普通查找：姓名包含关键字或工作证号完全相同。
@@ -976,13 +981,8 @@ size_t EmployeeList::chooseIndex(const vector<size_t> &matches) const {
 
 // 输出员工简表的表头。
 void EmployeeList::printBriefHeader(ostream &out) {
-    out << left << setw(5) << "序号"
-        << setw(14) << "姓名"
-        << setw(22) << "身份证号码"
-        << setw(16) << "工作证号"
-        << setw(14) << "生日"
-        << setw(16) << "部门"
-        << '\n';
+    out << left << setw(5) << "序号" << setw(14) << "姓名" << setw(22) << "身份证号码" << setw(16)
+        << "工作证号" << setw(14) << "生日" << setw(16) << "部门" << '\n';
     out << string(87, '-') << '\n';
 }
 

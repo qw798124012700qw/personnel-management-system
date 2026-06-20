@@ -5,12 +5,18 @@
 一个用 **C++17** 编写的人事管理系统,提供**控制台版**与 **Qt 图形界面版**两种界面,功能一致、数据互通。
 面向对象程序设计练习项目 —— 演示类设计、SQLite 数据库持久化、输入校验与图形界面开发。
 
+**📚 适合正在做同类课程设计的同学参考**:双界面 + SQLite + 单元测试 + CI 全套工程化,非教科书式的"单文件 + txt"。
+
 ![CI](https://github.com/qw798124012700qw/personnel-management-system/actions/workflows/ci.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/qw798124012700qw/personnel-management-system?style=flat-square&color=success)
+![Downloads](https://img.shields.io/github/downloads/qw798124012700qw/personnel-management-system/total?style=flat-square)
+![Stars](https://img.shields.io/github/stars/qw798124012700qw/personnel-management-system?style=flat-square)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white)
 ![Qt](https://img.shields.io/badge/Qt-5-41CD52?style=flat-square&logo=qt&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
+
+**[⬇️ 下载 Windows 免安装版](https://github.com/qw798124012700qw/personnel-management-system/releases/latest)** · 解压双击即用,无需装 Qt   |   觉得有用请点个 ⭐ Star 支持一下
 
 </div>
 
@@ -103,6 +109,8 @@
 ```
 
 ## 🚀 快速开始
+
+> 💡 **不想编译?** 直接到 [Releases](https://github.com/qw798124012700qw/personnel-management-system/releases/latest) 下载 Windows 免安装包,解压双击 `人事管理系统.exe` 即可运行(无需安装 Qt)。下面是从源码构建的方式。
 
 ### 控制台版
 

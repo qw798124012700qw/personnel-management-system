@@ -1,0 +1,35 @@
+name: CI
+
+# 每次推送或 PR 时，在 Ubuntu 上自动验证两端能编译、单元测试能通过。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装依赖 (SQLite + Qt5)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ make libsqlite3-dev \
+            qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite
+
+      - name: 编译控制台版
+        run: make CXX=g++
+
+      - name: 运行单元测试
+        run: make test CXX=g++
+
+      - name: 编译图形界面版 (Qt5)
+        working-directory: qt_gui
+        run: |
+          qmake personnel_gui.pro
+          make

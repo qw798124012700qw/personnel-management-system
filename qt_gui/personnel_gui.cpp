@@ -9,9 +9,11 @@
 #include <QScreen>
 #include <QDate>
 #include <QDateEdit>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -66,7 +68,23 @@ static QStringList splitRecordLine(const QString &line) {
 
 // 主窗口类，负责界面创建、按钮事件、表格刷新和文件读写。
 
+// 相对 exe 自身位置定位数据库,使无论从哪个目录启动都能找到同一份 data/。
+// 依次尝试: exe旁/data、上一级/data、上两级/data(开发时 qt_gui/release/../../data=项目根/data);
+// 都没有则默认用 exe 旁的 data/(并建好目录)。这样开发布局与便携发布包都能正确共享数据。
+static QString resolveDataFile() {
+    const QString exeDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {exeDir + "/data", exeDir + "/../data", exeDir + "/../../data"};
+    for (const QString &dir : candidates) {
+        if (QFileInfo::exists(dir + "/employees.db") || QFileInfo::exists(dir + "/employees.txt")) {
+            return QDir(dir).absoluteFilePath("employees.db");
+        }
+    }
+    QDir().mkpath(exeDir + "/data");
+    return QDir(exeDir + "/data").absoluteFilePath("employees.db");
+}
+
 MainWindow::MainWindow() {
+    dataFile = resolveDataFile(); // 必须在 loadFromFile() 之前确定数据库路径
     setWindowTitle("人事管理系统 - Qt 图形界面");
     // 默认尺寸自适应屏幕：不超过可用屏幕区域，避免在小屏 / 高分屏上窗口超出屏幕、底部按钮被挤出。
     QSize avail = QApplication::primaryScreen()->availableSize();

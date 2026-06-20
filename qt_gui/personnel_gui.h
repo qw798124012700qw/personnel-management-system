@@ -106,8 +106,8 @@ class MainWindow : public QMainWindow {
     QVector<QVector<Employee>> undoStack; // 撤销栈：每次增/删/改前压入一份快照
     QPushButton *undoButton = nullptr;    // 撤销按钮(随栈空/非空启用或禁用)
     bool dirty = false;                   // 是否有未保存改动（增删改后置 true，存/读后清零）
-    // Qt 程序在 qt_gui 目录运行，因此用 ../data 访问统一数据文件。
-    const QString dataFile = "../data/employees.db";
+    // 数据库路径在构造时由 resolveDataFile() 相对 exe 位置智能定位（兼容开发布局与便携包）。
+    QString dataFile;
 };
 
 #endif

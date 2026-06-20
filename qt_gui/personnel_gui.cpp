@@ -3,8 +3,10 @@
 #include <algorithm>
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QScreen>
 #include <QDate>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
@@ -73,14 +75,17 @@ static QStringList splitRecordLine(const QString &line) {
 
 MainWindow::MainWindow() {
     setWindowTitle("人事管理系统 - Qt 图形界面");
-    resize(1220, 760);
-    setMinimumSize(1040, 680);
+    // 默认尺寸自适应屏幕：不超过可用屏幕区域，避免在小屏 / 高分屏上窗口超出屏幕、底部按钮被挤出。
+    QSize avail = QApplication::primaryScreen()->availableSize();
+    resize(qMin(1180, avail.width() - 40), qMin(760, avail.height() - 50));
+    setMinimumSize(qMin(880, avail.width() - 60), qMin(560, avail.height() - 70));
     setWindowIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     setStyleSheet(appStyleSheet());
 
     // model 保存真正显示到表格中的数据。
     model = new QStandardItemModel(this);
-    model->setHorizontalHeaderLabels({"姓名", "性别", "身份证号码", "生日", "电话", "工作证号", "部门", "职务", "薪水", "家庭地址"});
+    model->setHorizontalHeaderLabels({"姓名", "性别", "身份证号码", "生日", "电话", "工作证号",
+                                      "部门", "职务", "薪水", "家庭地址"});
 
     // proxy 位于 model 和 table 中间，用于筛选和排序。
     proxy = new QSortFilterProxyModel(this);
@@ -125,9 +130,8 @@ MainWindow::MainWindow() {
     setCentralWidget(central);
 
     // 点击表格某一行时，把该员工信息填入表单，方便修改。
-    connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this](const QModelIndex &current) {
-        fillFormFromCurrentRow(current);
-    });
+    connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            [this](const QModelIndex &current) { fillFormFromCurrentRow(current); });
 
     loadFromFile();
     refreshTable();
@@ -136,21 +140,19 @@ MainWindow::MainWindow() {
 // 关闭窗口时，若存在未保存的改动，提示用户 保存 / 放弃 / 取消。
 void MainWindow::closeEvent(QCloseEvent *event) {
     if (!dirty) {
-        event->accept();  // 没有改动，直接关闭
+        event->accept(); // 没有改动，直接关闭
         return;
     }
     QMessageBox::StandardButton choice = QMessageBox::question(
-        this, "退出",
-        "有未保存的改动，是否保存后退出？",
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
-        QMessageBox::Save);
+        this, "退出", "有未保存的改动，是否保存后退出？",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     if (choice == QMessageBox::Save) {
-        saveToFile();     // 保存（成功后 dirty 会被清零）
+        saveToFile(); // 保存（成功后 dirty 会被清零）
         event->accept();
     } else if (choice == QMessageBox::Discard) {
-        event->accept();  // 放弃改动，直接关闭
+        event->accept(); // 放弃改动，直接关闭
     } else {
-        event->ignore();  // 取消，留在程序中
+        event->ignore(); // 取消，留在程序中
     }
 }
 
@@ -367,8 +369,10 @@ void MainWindow::buildForm() {
     addressEdit->setClearButtonEnabled(true);
 
     // 使用正则表达式做简单输入限制，减少明显错误输入。
-    idEdit->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9]{15}|[0-9]{17}[0-9Xx]"), idEdit));
-    telephoneEdit->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9-]{7,15}"), telephoneEdit));
+    idEdit->setValidator(
+        new QRegularExpressionValidator(QRegularExpression("[0-9]{15}|[0-9]{17}[0-9Xx]"), idEdit));
+    telephoneEdit->setValidator(
+        new QRegularExpressionValidator(QRegularExpression("[0-9-]{7,15}"), telephoneEdit));
 
     layout->addWidget(new QLabel("姓名"), 0, 0);
     layout->addWidget(nameEdit, 0, 1);
@@ -421,20 +425,15 @@ QWidget *MainWindow::buildSearchBox() {
     layout->addWidget(salaryRangeButton, 0, 4);
 
     // 文本变化时立即筛选，不需要额外点击查询按钮。
-    connect(keywordEdit, &QLineEdit::textChanged, this, [this](const QString &) {
-        applyFilter();
-    });
-    connect(queryModeBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-        applyFilter();
-    });
+    connect(keywordEdit, &QLineEdit::textChanged, this, [this](const QString &) { applyFilter(); });
+    connect(queryModeBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { applyFilter(); });
     connect(clearFilterButton, &QPushButton::clicked, this, [this]() {
         keywordEdit->clear();
         queryModeBox->setCurrentIndex(0);
         applyFilter();
     });
-    connect(salaryRangeButton, &QPushButton::clicked, this, [this]() {
-        salaryRangeSearch();
-    });
+    connect(salaryRangeButton, &QPushButton::clicked, this, [this]() { salaryRangeSearch(); });
 
     return box;
 }
@@ -494,24 +493,24 @@ void MainWindow::buildButtons() {
         refreshTable();
     });
     connect(saveButton, &QPushButton::clicked, this, [this]() { saveToFile(); });
-    connect(departmentStatButton, &QPushButton::clicked, this, [this]() { showDepartmentStatistics(); });
+    connect(departmentStatButton, &QPushButton::clicked, this,
+            [this]() { showDepartmentStatistics(); });
     connect(salaryStatButton, &QPushButton::clicked, this, [this]() { showSalaryStatistics(); });
     connect(sortNumberButton, &QPushButton::clicked, this, [this]() {
         // QVector 也可以使用 std::sort 排序。
-        std::sort(employees.begin(), employees.end(), [](const Employee &a, const Employee &b) {
-            return a.number < b.number;
-        });
+        std::sort(employees.begin(), employees.end(),
+                  [](const Employee &a, const Employee &b) { return a.number < b.number; });
         refreshTable();
     });
     connect(sortSalaryButton, &QPushButton::clicked, this, [this]() {
-        std::sort(employees.begin(), employees.end(), [](const Employee &a, const Employee &b) {
-            return a.salary > b.salary;
-        });
+        std::sort(employees.begin(), employees.end(),
+                  [](const Employee &a, const Employee &b) { return a.salary > b.salary; });
         refreshTable();
     });
 }
 
-void MainWindow::setupButton(QPushButton *button, QStyle::StandardPixmap icon, const QString &variant) {
+void MainWindow::setupButton(QPushButton *button, QStyle::StandardPixmap icon,
+                             const QString &variant) {
     button->setIcon(style()->standardIcon(icon));
     button->setIconSize(QSize(16, 16));
     button->setCursor(Qt::PointingHandCursor);
@@ -536,8 +535,9 @@ Employee MainWindow::formToEmployee() const {
 
 // 添加和修改前做基本校验：必填项、身份证长度、工作证号唯一。
 bool MainWindow::validateEmployee(const Employee &employee, int ignoreIndex) {
-    if (employee.name.isEmpty() || employee.id.isEmpty() || employee.telephone.isEmpty() || employee.number.isEmpty() ||
-        employee.department.isEmpty() || employee.post.isEmpty() || employee.address.isEmpty()) {
+    if (employee.name.isEmpty() || employee.id.isEmpty() || employee.telephone.isEmpty() ||
+        employee.number.isEmpty() || employee.department.isEmpty() || employee.post.isEmpty() ||
+        employee.address.isEmpty()) {
         QMessageBox::warning(this, "输入不完整", "请填写所有员工信息。");
         return false;
     }
@@ -571,7 +571,7 @@ void MainWindow::addEmployee() {
         return;
     }
     employees.append(employee);
-    dirty = true;              // 标记有未保存改动
+    dirty = true; // 标记有未保存改动
     refreshTable();
     statusLabel->setText("添加成功");
 }
@@ -588,7 +588,7 @@ void MainWindow::updateEmployee() {
         return;
     }
     employees[row] = employee;
-    dirty = true;              // 标记有未保存改动
+    dirty = true; // 标记有未保存改动
     refreshTable();
     statusLabel->setText("修改成功");
 }
@@ -602,7 +602,7 @@ void MainWindow::deleteEmployee() {
     }
     if (QMessageBox::question(this, "确认删除", "确认删除选中的员工信息吗？") == QMessageBox::Yes) {
         employees.removeAt(row);
-        dirty = true;          // 标记有未保存改动
+        dirty = true; // 标记有未保存改动
         refreshTable();
         clearForm();
         statusLabel->setText("删除成功");
@@ -651,16 +651,10 @@ void MainWindow::refreshTable() {
     model->removeRows(0, model->rowCount());
     for (const Employee &employee : employees) {
         QList<QStandardItem *> row;
-        row << makeItem(employee.name)
-            << makeItem(employee.sex)
-            << makeItem(employee.id)
-            << makeItem(employee.birthday)
-            << makeItem(employee.telephone)
-            << makeItem(employee.number)
-            << makeItem(employee.department)
-            << makeItem(employee.post)
-            << makeNumberItem(employee.salary)
-            << makeItem(employee.address);
+        row << makeItem(employee.name) << makeItem(employee.sex) << makeItem(employee.id)
+            << makeItem(employee.birthday) << makeItem(employee.telephone)
+            << makeItem(employee.number) << makeItem(employee.department) << makeItem(employee.post)
+            << makeNumberItem(employee.salary) << makeItem(employee.address);
         model->appendRow(row);
     }
     applyFilter();
@@ -687,20 +681,20 @@ QStandardItem *MainWindow::makeNumberItem(double value) const {
 void MainWindow::applyFilter() {
     int column = -1;
     switch (queryModeBox->currentIndex()) {
-        case 1:
-            column = 0;
-            break;
-        case 2:
-            column = 6;
-            break;
-        case 3:
-            column = 7;
-            break;
-        case 4:
-            column = 5;
-            break;
-        default:
-            column = -1;
+    case 1:
+        column = 0;
+        break;
+    case 2:
+        column = 6;
+        break;
+    case 3:
+        column = 7;
+        break;
+    case 4:
+        column = 5;
+        break;
+    default:
+        column = -1;
     }
     proxy->setFilterKeyColumn(column);
     proxy->setFilterFixedString(keywordEdit->text().trimmed());
@@ -709,11 +703,13 @@ void MainWindow::applyFilter() {
 // 薪水区间查询使用两个输入框，并用弹窗显示结果。
 void MainWindow::salaryRangeSearch() {
     bool ok = false;
-    double minSalary = QInputDialog::getDouble(this, "薪水区间查询", "最低薪水", 0, 0, 1000000, 2, &ok);
+    double minSalary =
+        QInputDialog::getDouble(this, "薪水区间查询", "最低薪水", 0, 0, 1000000, 2, &ok);
     if (!ok) {
         return;
     }
-    double maxSalary = QInputDialog::getDouble(this, "薪水区间查询", "最高薪水", 10000, 0, 1000000, 2, &ok);
+    double maxSalary =
+        QInputDialog::getDouble(this, "薪水区间查询", "最高薪水", 10000, 0, 1000000, 2, &ok);
     if (!ok) {
         return;
     }
@@ -725,14 +721,17 @@ void MainWindow::salaryRangeSearch() {
     int count = 0;
     for (const Employee &employee : employees) {
         if (employee.salary >= minSalary && employee.salary <= maxSalary) {
-            message += QString("%1  %2  %3元\n").arg(employee.name, employee.department).arg(employee.salary, 0, 'f', 2);
+            message += QString("%1  %2  %3元\n")
+                           .arg(employee.name, employee.department)
+                           .arg(employee.salary, 0, 'f', 2);
             ++count;
         }
     }
     if (message.isEmpty()) {
         message = "没有符合条件的员工。";
     }
-    QMessageBox::information(this, "薪水区间查询", QString("找到 %1 条记录：\n\n%2").arg(count).arg(message));
+    QMessageBox::information(this, "薪水区间查询",
+                             QString("找到 %1 条记录：\n\n%2").arg(count).arg(message));
 }
 
 // 部门统计：统计每个部门出现次数。
@@ -774,14 +773,15 @@ void MainWindow::showSalaryStatistics() {
             minIndex = i;
         }
     }
-    QString message = QString("员工总数：%1\n薪水总额：%2\n平均薪水：%3\n最高薪水：%4（%5）\n最低薪水：%6（%7）")
-                          .arg(employees.size())
-                          .arg(total, 0, 'f', 2)
-                          .arg(total / employees.size(), 0, 'f', 2)
-                          .arg(employees[maxIndex].name)
-                          .arg(employees[maxIndex].salary, 0, 'f', 2)
-                          .arg(employees[minIndex].name)
-                          .arg(employees[minIndex].salary, 0, 'f', 2);
+    QString message =
+        QString("员工总数：%1\n薪水总额：%2\n平均薪水：%3\n最高薪水：%4（%5）\n最低薪水：%6（%7）")
+            .arg(employees.size())
+            .arg(total, 0, 'f', 2)
+            .arg(total / employees.size(), 0, 'f', 2)
+            .arg(employees[maxIndex].name)
+            .arg(employees[maxIndex].salary, 0, 'f', 2)
+            .arg(employees[minIndex].name)
+            .arg(employees[minIndex].salary, 0, 'f', 2);
     QMessageBox::information(this, "薪水统计", message);
 }
 
@@ -818,7 +818,7 @@ void MainWindow::loadFromFile() {
         employee.department = fields[9];
         employees.append(employee);
     }
-    dirty = false;             // 已与文件同步，清除脏标志
+    dirty = false; // 已与文件同步，清除脏标志
     statusLabel->setText(QString("已读取 %1 条员工信息").arg(employees.size()));
 }
 
@@ -833,16 +833,9 @@ void MainWindow::saveToFile() {
     out.setCodec("UTF-8");
     for (const Employee &employee : employees) {
         QStringList fields;
-        fields << employee.name
-               << employee.sex
-               << employee.id
-               << employee.birthday
-               << employee.telephone
-               << employee.number
-               << employee.address
-               << QString::number(employee.salary, 'f', 2)
-               << employee.post
-               << employee.department;
+        fields << employee.name << employee.sex << employee.id << employee.birthday
+               << employee.telephone << employee.number << employee.address
+               << QString::number(employee.salary, 'f', 2) << employee.post << employee.department;
         for (int i = 0; i < fields.size(); ++i) {
             if (i > 0) {
                 out << '|';
@@ -851,6 +844,6 @@ void MainWindow::saveToFile() {
         }
         out << '\n';
     }
-    dirty = false;             // 已写入文件，清除脏标志
+    dirty = false; // 已写入文件，清除脏标志
     statusLabel->setText(QString("已保存 %1 条员工信息").arg(employees.size()));
 }

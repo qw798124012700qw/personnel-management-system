@@ -76,6 +76,9 @@ class MainWindow : public QMainWindow {
     void showSalaryStatistics();                             // 弹窗显示薪水统计
     void loadFromFile();                                     // 从数据文件读取员工
     void saveToFile();                                       // 保存员工到数据文件
+    void exportCsv();                                        // 导出为 CSV(可用 Excel 打开)
+    void pushUndo();                                         // 增/删/改前记录一次快照
+    void undo();                                             // 撤销上一次增/删/改
 
     QTableView *table = nullptr;            // 员工表格视图
     QStandardItemModel *model = nullptr;    // 表格数据模型
@@ -99,8 +102,10 @@ class MainWindow : public QMainWindow {
     QLineEdit *keywordEdit = nullptr;     // 筛选关键字输入
     QComboBox *queryModeBox = nullptr;    // 筛选方式下拉
 
-    QVector<Employee> employees; // 内存中的全部员工数据
-    bool dirty = false;          // 是否有未保存改动（增删改后置 true，存/读后清零）
+    QVector<Employee> employees;          // 内存中的全部员工数据
+    QVector<QVector<Employee>> undoStack; // 撤销栈：每次增/删/改前压入一份快照
+    QPushButton *undoButton = nullptr;    // 撤销按钮(随栈空/非空启用或禁用)
+    bool dirty = false;                   // 是否有未保存改动（增删改后置 true，存/读后清零）
     // Qt 程序在 qt_gui 目录运行，因此用 ../data 访问统一数据文件。
     const QString dataFile = "../data/employees.db";
 };

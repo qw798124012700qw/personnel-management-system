@@ -14,12 +14,16 @@ HDR      := src/personnel_system.h
 BIN      := build/personnel_system.exe
 LIBS     := -lsqlite3   # 链接 SQLite 嵌入式数据库
 
+# 单元测试（零依赖，复用控制台版核心逻辑 personnel_system.cpp）
+TEST_SRC := tests/test_core.cpp src/personnel_system.cpp
+TEST_BIN := build/test_core.exe
+
 # Qt 图形界面版（Qt5，qmake 名为 qmake-qt5）
 GUI_DIR     := qt_gui
 GUI_BIN     := $(GUI_DIR)/release/personnel_gui.exe
 QT_PLUGINS  := C:/Users/Public/NUAAProgEnv/msys64/clang64/share/qt5/plugins
 
-.PHONY: all run clean gui run-gui clean-gui
+.PHONY: all run clean gui run-gui clean-gui test
 
 # ---------- 控制台版 ----------
 all: $(BIN)
@@ -33,7 +37,16 @@ run: all
 	./$(BIN)
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(TEST_BIN)
+
+# ---------- 单元测试 ----------
+# 编译并运行核心逻辑测试；退出码非 0 表示有用例失败（供 CI 判定）。
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SRC) $(HDR)
+	-mkdir -p build
+	$(CXX) $(CXXFLAGS) $(TEST_SRC) -o $(TEST_BIN) $(LIBS)
 
 # ---------- Qt 图形界面版 ----------
 # qmake-qt5 生成 Makefile，mingw32-make 编译，最后把平台插件放到 exe 旁边。

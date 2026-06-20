@@ -11,6 +11,7 @@
 #include <QDateEdit>
 #include <QDoubleSpinBox>
 #include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -35,6 +36,8 @@
 #include <QTextStream>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include "../common/db_schema.h" // 与控制台版共用的数据库表结构
 
 // 读取旧文本数据文件时按 | 拆分，同时识别反斜杠转义(仅用于首次从 .txt 自动迁移到数据库)。
 static QStringList splitRecordLine(const QString &line) {
@@ -446,6 +449,9 @@ void MainWindow::buildButtons() {
     QPushButton *salaryStatButton = new QPushButton("薪水统计", buttonBox);
     QPushButton *sortNumberButton = new QPushButton("按工号排序", buttonBox);
     QPushButton *sortSalaryButton = new QPushButton("按薪水排序", buttonBox);
+    QPushButton *exportButton = new QPushButton("导出CSV", buttonBox);
+    undoButton = new QPushButton("撤销", buttonBox);
+    undoButton->setEnabled(false); // 无可撤销操作时禁用
 
     setupButton(addButton, QStyle::SP_DialogApplyButton, "primary");
     setupButton(updateButton, QStyle::SP_BrowserReload, "primary");
@@ -457,6 +463,8 @@ void MainWindow::buildButtons() {
     setupButton(salaryStatButton, QStyle::SP_FileDialogInfoView, "quiet");
     setupButton(sortNumberButton, QStyle::SP_ArrowUp, "quiet");
     setupButton(sortSalaryButton, QStyle::SP_ArrowDown, "quiet");
+    setupButton(exportButton, QStyle::SP_DialogSaveButton, "quiet");
+    setupButton(undoButton, QStyle::SP_ArrowBack, "quiet");
 
     layout->addWidget(addButton, 0, 0);
     layout->addWidget(updateButton, 0, 1);
@@ -468,10 +476,12 @@ void MainWindow::buildButtons() {
     layout->addWidget(salaryStatButton, 1, 1);
     layout->addWidget(sortNumberButton, 1, 2);
     layout->addWidget(sortSalaryButton, 1, 3);
+    layout->addWidget(exportButton, 1, 4);
+    layout->addWidget(undoButton, 1, 5);
 
     statusLabel = new QLabel("就绪", buttonBox);
     statusLabel->setObjectName("statusText");
-    layout->addWidget(statusLabel, 1, 4, 1, 2);
+    layout->addWidget(statusLabel, 2, 0, 1, 6);
 
     // Qt 的信号槽机制：按钮 clicked 信号触发对应的业务函数。
     connect(addButton, &QPushButton::clicked, this, [this]() { addEmployee(); });
@@ -497,6 +507,8 @@ void MainWindow::buildButtons() {
                   [](const Employee &a, const Employee &b) { return a.salary > b.salary; });
         refreshTable();
     });
+    connect(exportButton, &QPushButton::clicked, this, [this]() { exportCsv(); });
+    connect(undoButton, &QPushButton::clicked, this, [this]() { undo(); });
 }
 
 void MainWindow::setupButton(QPushButton *button, QStyle::StandardPixmap icon,
@@ -560,6 +572,7 @@ void MainWindow::addEmployee() {
     if (!validateEmployee(employee)) {
         return;
     }
+    pushUndo(); // 改动前留快照,支持撤销
     employees.append(employee);
     dirty = true; // 标记有未保存改动
     refreshTable();
@@ -577,6 +590,7 @@ void MainWindow::updateEmployee() {
     if (!validateEmployee(employee, row)) {
         return;
     }
+    pushUndo(); // 改动前留快照,支持撤销
     employees[row] = employee;
     dirty = true; // 标记有未保存改动
     refreshTable();
@@ -591,6 +605,7 @@ void MainWindow::deleteEmployee() {
         return;
     }
     if (QMessageBox::question(this, "确认删除", "确认删除选中的员工信息吗？") == QMessageBox::Yes) {
+        pushUndo(); // 改动前留快照,支持撤销
         employees.removeAt(row);
         dirty = true; // 标记有未保存改动
         refreshTable();
@@ -785,9 +800,8 @@ void MainWindow::loadFromFile() {
             statusLabel->setText("无法打开数据库");
         } else {
             QSqlQuery q(db);
-            q.exec("CREATE TABLE IF NOT EXISTS employees (number TEXT PRIMARY KEY, name TEXT, "
-                   "sex TEXT, id TEXT, birthday TEXT, telephone TEXT, address TEXT, salary TEXT, "
-                   "post TEXT, department TEXT);");
+            q.exec(pms::kCreateTableSql);
+            q.exec(pms::kCreateDeptIndexSql);
             q.exec("SELECT name, sex, id, birthday, telephone, number, address, salary, post, "
                    "department FROM employees;");
             while (q.next()) {
@@ -857,40 +871,112 @@ void MainWindow::loadFromFile() {
 
 // 保存到 SQLite 数据库：清空表后整表重写(放在事务里)。与控制台版共用同一数据库。
 void MainWindow::saveToFile() {
-    QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms");
-    db.setDatabaseName(dataFile);
-    if (!db.open()) {
-        QMessageBox::warning(this, "保存失败", "无法打开数据库。");
-        QSqlDatabase::removeDatabase("pms");
+    bool ok = false;
+    // 把 db 限制在内层作用域：必须在 removeDatabase 之前析构，否则 Qt 会报
+    // “connection 'pms' is still in use”。
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms");
+        db.setDatabaseName(dataFile);
+        if (!db.open()) {
+            QMessageBox::warning(this, "保存失败", "无法打开数据库。");
+        } else {
+            QSqlQuery q(db);
+            q.exec(pms::kCreateTableSql);
+            q.exec(pms::kCreateDeptIndexSql);
+            db.transaction();
+            q.exec("DELETE FROM employees;");
+            q.prepare("INSERT INTO employees (number, name, sex, id, birthday, telephone, address, "
+                      "salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);");
+            for (const Employee &e : employees) {
+                q.addBindValue(e.number);
+                q.addBindValue(e.name);
+                q.addBindValue(e.sex);
+                q.addBindValue(e.id);
+                q.addBindValue(e.birthday);
+                q.addBindValue(e.telephone);
+                q.addBindValue(e.address);
+                q.addBindValue(e.salary); // salary 列为 REAL，按数值存储
+                q.addBindValue(e.post);
+                q.addBindValue(e.department);
+                q.exec();
+            }
+            db.commit();
+            db.close();
+            ok = true;
+        }
+    }
+    QSqlDatabase::removeDatabase("pms");
+    if (!ok) {
         return;
     }
-    {
-        QSqlQuery q(db);
-        q.exec(
-            "CREATE TABLE IF NOT EXISTS employees (number TEXT PRIMARY KEY, name TEXT, sex TEXT, "
-            "id TEXT, birthday TEXT, telephone TEXT, address TEXT, salary TEXT, post TEXT, "
-            "department TEXT);");
-        db.transaction();
-        q.exec("DELETE FROM employees;");
-        q.prepare("INSERT INTO employees (number, name, sex, id, birthday, telephone, address, "
-                  "salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);");
-        for (const Employee &e : employees) {
-            q.addBindValue(e.number);
-            q.addBindValue(e.name);
-            q.addBindValue(e.sex);
-            q.addBindValue(e.id);
-            q.addBindValue(e.birthday);
-            q.addBindValue(e.telephone);
-            q.addBindValue(e.address);
-            q.addBindValue(QString::number(e.salary, 'f', 2));
-            q.addBindValue(e.post);
-            q.addBindValue(e.department);
-            q.exec();
-        }
-        db.commit();
-    }
-    db.close();
-    QSqlDatabase::removeDatabase("pms");
     dirty = false;
     statusLabel->setText(QString("已保存 %1 条员工信息到数据库").arg(employees.size()));
+}
+
+// 按 CSV 规则转义单个字段：含逗号/引号/换行时用双引号包裹，内部双引号翻倍。
+static QString csvCell(const QString &value) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n') ||
+        value.contains('\r')) {
+        QString escaped = value;
+        escaped.replace('"', "\"\"");
+        return '"' + escaped + '"';
+    }
+    return value;
+}
+
+// 导出当前(内存中)的全部员工为 CSV 文件，可直接用 Excel / WPS 打开。
+void MainWindow::exportCsv() {
+    if (employees.isEmpty()) {
+        QMessageBox::information(this, "导出CSV", "当前没有可导出的员工数据。");
+        return;
+    }
+    QString path =
+        QFileDialog::getSaveFileName(this, "导出为 CSV", "employees.csv", "CSV 文件 (*.csv)");
+    if (path.isEmpty()) {
+        return; // 用户取消
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "导出失败", "无法写入所选文件。");
+        return;
+    }
+    QTextStream out(&file);
+    out.setCodec("UTF-8");
+    out.setGenerateByteOrderMark(true); // 写 BOM，确保 Excel 正确识别中文
+    out << "姓名,性别,身份证号,生日,电话,工作证号,地址,薪水,职务,部门\n";
+    for (const Employee &e : employees) {
+        QStringList cols{e.name,      e.sex,       e.id,      e.birthday,
+                         e.telephone, e.number,    e.address, QString::number(e.salary, 'f', 2),
+                         e.post,      e.department};
+        QStringList escaped;
+        for (const QString &c : cols) {
+            escaped << csvCell(c);
+        }
+        out << escaped.join(',') << '\n';
+    }
+    file.close();
+    statusLabel->setText(QString("已导出 %1 条到 %2").arg(employees.size()).arg(path));
+}
+
+// 在一次会增/删/改数据的操作前调用：保存当前数据快照，供撤销使用。
+void MainWindow::pushUndo() {
+    undoStack.append(employees);
+    if (undoButton) {
+        undoButton->setEnabled(true);
+    }
+}
+
+// 撤销上一次增/删/改：弹出最近的快照并恢复。
+void MainWindow::undo() {
+    if (undoStack.isEmpty()) {
+        return;
+    }
+    employees = undoStack.takeLast();
+    dirty = true; // 撤销后内存与磁盘可能不一致
+    refreshTable();
+    clearForm();
+    if (undoButton) {
+        undoButton->setEnabled(!undoStack.isEmpty());
+    }
+    statusLabel->setText("已撤销上一步操作");
 }

@@ -11,6 +11,8 @@
 
 #include <sqlite3.h> // SQLite 嵌入式数据库 C API
 
+#include "../common/db_schema.h" // 与图形界面版共用的数据库表结构
+
 using namespace std;
 
 namespace {
@@ -59,6 +61,17 @@ double toDouble(const string &value) {
     double result = 0.0;
     ss >> result;
     return result;
+}
+
+// 把数据库中的 REAL 薪水格式化成字符串：整数不带小数点，否则保留两位小数。
+string formatMoney(double value) {
+    long long whole = static_cast<long long>(value);
+    if (static_cast<double>(whole) == value) {
+        return to_string(whole);
+    }
+    ostringstream ss;
+    ss << fixed << setprecision(2) << value;
+    return ss.str();
 }
 
 // 读取一个合法金额，用于薪水区间查询。
@@ -612,12 +625,13 @@ void EmployeeList::deleteAll() {
 }
 
 // ============ SQLite 数据库存储 ============
+// 表结构定义见 common/db_schema.h（与图形界面版共用，避免 schema 漂移）。
 
-// 员工表结构：以工作证号(number)为主键(天然保证唯一),其余字段各占一列,便于按列查询。
-static const char *kSchema =
-    "CREATE TABLE IF NOT EXISTS employees ("
-    "number TEXT PRIMARY KEY, name TEXT, sex TEXT, id TEXT, birthday TEXT, "
-    "telephone TEXT, address TEXT, salary TEXT, post TEXT, department TEXT);";
+// 建表 + 建索引：两处入口（save / load）共用。
+static void ensureSchema(sqlite3 *db) {
+    sqlite3_exec(db, pms::kCreateTableSql, nullptr, nullptr, nullptr);
+    sqlite3_exec(db, pms::kCreateDeptIndexSql, nullptr, nullptr, nullptr);
+}
 
 // 由数据库路径(.db)推导出旧文本文件路径(.txt),用于首次运行时自动迁移。
 static string textPathOf(const string &dbPath) {
@@ -635,7 +649,7 @@ void EmployeeList::save() const {
         sqlite3_close(db);
         return;
     }
-    sqlite3_exec(db, kSchema, nullptr, nullptr, nullptr);
+    ensureSchema(db);
     sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
     sqlite3_exec(db, "DELETE FROM employees;", nullptr, nullptr, nullptr);
 
@@ -658,7 +672,7 @@ void EmployeeList::save() const {
         sqlite3_bind_text(stmt, 5, bd.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 6, e.telephone().c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 7, e.address().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 8, e.salary().c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(stmt, 8, e.salaryValue()); // salary 列为 REAL，按数值存储
         sqlite3_bind_text(stmt, 9, e.post().c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 10, e.department().c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_step(stmt);
@@ -678,7 +692,7 @@ void EmployeeList::load() {
         sqlite3_close(db);
         return;
     }
-    sqlite3_exec(db, kSchema, nullptr, nullptr, nullptr); // 首次运行自动建表
+    ensureSchema(db); // 首次运行自动建表 + 建索引
 
     vector<Employee> loaded;
     numberIndex_.clear();
@@ -692,11 +706,15 @@ void EmployeeList::load() {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             stringstream ss;
             for (int i = 0; i < 10; ++i) {
-                const unsigned char *t = sqlite3_column_text(stmt, i);
                 if (i > 0) {
                     ss << '|';
                 }
-                ss << escapeField(t ? reinterpret_cast<const char *>(t) : "");
+                if (i == 7) { // salary 列为 REAL，按数值读出再格式化
+                    ss << escapeField(formatMoney(sqlite3_column_double(stmt, i)));
+                } else {
+                    const unsigned char *t = sqlite3_column_text(stmt, i);
+                    ss << escapeField(t ? reinterpret_cast<const char *>(t) : "");
+                }
             }
             try {
                 Employee employee = Employee::deserialize(ss.str());

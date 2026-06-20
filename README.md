@@ -3,10 +3,12 @@
 # 人事管理系统 · Personnel Management System
 
 一个用 **C++17** 编写的人事管理系统,提供**控制台版**与 **Qt 图形界面版**两种界面,功能一致、数据互通。
-面向对象程序设计练习项目 —— 演示类设计、文件持久化、输入校验与图形界面开发。
+面向对象程序设计练习项目 —— 演示类设计、SQLite 数据库持久化、输入校验与图形界面开发。
 
+![CI](https://github.com/qw798124012700qw/personnel-management-system/actions/workflows/ci.yml/badge.svg)
 ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white)
 ![Qt](https://img.shields.io/badge/Qt-5-41CD52?style=flat-square&logo=qt&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
@@ -47,6 +49,8 @@
 
 **图形界面专属**
 - 🖱️ 表格点击行即载入表单编辑、点列头排序;关键字即时筛选;统计结果弹窗
+- ↩️ **撤销**:可逐步回退最近的增 / 删 / 改操作
+- 📤 **导出 CSV**:一键导出当前数据(UTF-8 带 BOM,可直接用 Excel / WPS 打开)
 - 🪟 **关闭窗口时提示保存**,避免误关丢数据
 - 🖥️ **高 DPI 适配** + 窗口尺寸**自适应屏幕**
 
@@ -70,7 +74,8 @@
 | --- | --- |
 | 语言 | C++17(`vector` / `string` / 文件流 / 异常) |
 | 图形界面 | Qt 5 Widgets(`qmake` 构建) |
-| 数据存储 | SQLite 3(控制台用 C API,图形界面用 Qt 5 Sql 的 `QSQLITE` 驱动) |
+| 数据存储 | SQLite 3(控制台用 C API,图形界面用 Qt 5 Sql 的 `QSQLITE` 驱动;表结构见 `common/db_schema.h`) |
+| 测试 / CI | 自带轻量断言框架(`make test`)+ GitHub Actions 自动构建 |
 | 设计 | 面向对象、MVC(模型 / 视图 / 代理) |
 
 ## 📁 项目结构
@@ -86,6 +91,9 @@
 │   ├── personnel_gui.h
 │   ├── personnel_gui.cpp
 │   └── personnel_gui.pro
+├── common/db_schema.h    两端共用的数据库表结构(单一事实来源)
+├── tests/test_core.cpp   核心逻辑单元测试(make test)
+├── .github/workflows/    GitHub Actions CI 配置
 ├── data/employees.txt    种子数据(120 条；首次运行自动导入 SQLite 数据库)
 ├── Makefile              构建脚本
 ├── 使用手册.md / 运行说明.md
@@ -104,7 +112,7 @@ g++ -std=c++17 -Wall -Wextra src/main.cpp src/personnel_system.cpp -o personnel_
 ./personnel_system
 ```
 
-或使用 Makefile:`make`(编译) / `make run`(编译并运行)。
+或使用 Makefile:`make`(编译) / `make run`(编译并运行) / `make test`(运行单元测试)。
 
 ### 图形界面版(需安装 Qt 5)
 
@@ -116,9 +124,12 @@ make                       # Windows(MinGW)上用 mingw32-make
 
 > 图形界面通过 Qt SQL 模块访问数据库;`QSQLITE` 驱动随 Qt 提供,运行时需位于 `sqldrivers/`(`make gui` 会自动部署)。
 
-## 📂 数据文件格式
+## 📂 数据存储
 
-数据保存在 `data/employees.txt`(UTF-8),每个员工占一行,10 个字段以 `|` 分隔:
+运行数据保存在 SQLite 数据库 `data/employees.db`(两端共用,表结构见 `common/db_schema.h`)。
+首次运行时若数据库为空,会自动从同目录的**种子文本文件** `data/employees.txt` 迁移并写回数据库。
+
+种子文本文件为 UTF-8,每个员工占一行,10 个字段以 `|` 分隔:
 
 ```
 姓名|性别|身份证号|生日(YYYY-MM-DD)|电话|工作证号|家庭地址|薪水|职务|部门
@@ -130,7 +141,7 @@ make                       # Windows(MinGW)上用 mingw32-make
 张三|男|110101199001011234|1990-01-01|13800138000|1001|北京市海淀区中关村|8500|软件工程师|研发部
 ```
 
-字段中的 `|` 与 `\` 会被转义;读取时遇到字段数错误、日期非法、薪水非数字或工作证号重复的行会自动跳过。
+字段中的 `|` 与 `\` 会被转义;迁移 / 读取时遇到字段数错误、日期非法、薪水非数字或工作证号重复的行会自动跳过。
 
 ## 🏗️ 系统框架
 
@@ -145,10 +156,13 @@ make                       # Windows(MinGW)上用 mingw32-make
 
 - [x] 图形界面**高 DPI 适配 + 窗口尺寸自适应屏幕**
 - [x] 用哈希表(`unordered_map`)为工作证号建索引,把查找 / 查重从 `O(n²)` 优化到 `O(1)` / `O(n)`,支撑更大数据量
-- [ ] 统一控制台版与图形界面版的员工数据模型,减少重复代码
-- [ ] 数据存储改用 **SQLite**,支持更大规模与更可靠的并发读写
-- [ ] 图形界面增加 **导出 CSV / Excel**、撤销、列宽与排序记忆等
-- [ ] 引入单元测试(如 GoogleTest)覆盖核心逻辑
+- [x] 数据存储改用 **SQLite**(控制台 C API + 图形界面 `QSQLITE` 驱动,共用 `data/employees.db`,首次自动迁移)
+- [x] 抽出共享数据库表结构 `common/db_schema.h`,消除两端 schema 重复
+- [x] 图形界面增加 **导出 CSV** 与**撤销**操作
+- [x] 引入**单元测试**(自带轻量断言框架)+ **GitHub Actions CI** 持续构建
+- [ ] 进一步统一两端的员工数据模型(目前 schema 已统一,领域类仍各自实现)
+- [ ] 把按部门 / 薪水区间等查询下推到 SQL(当前在内存中完成,数据量大时受益)
+- [ ] 图形界面记忆列宽与排序状态;撤销 / 重做支持多级与快捷键
 
 ## 📄 许可证
 

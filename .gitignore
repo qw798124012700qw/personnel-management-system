@@ -1,10 +1,12 @@
 # ===== 编译产物 / Build outputs(不上传,可重新编译生成)=====
 /build/
+/dist/
 qt_gui/release/
 qt_gui/debug/
 *.o
 *.obj
 *.exe
+*.zip
 
 # ===== SQLite 数据库(运行时生成；首次由 data/employees.txt 自动迁移)=====
 *.db

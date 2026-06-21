@@ -75,6 +75,79 @@
 
 图形界面版使用 `QMainWindow` + `QTableView` / `QStandardItemModel` / `QSortFilterProxyModel`,通过信号槽连接按钮事件,与控制台版**共用同一个 SQLite 数据库**(图形界面通过 Qt SQL 模块的 `QSQLITE` 驱动访问)。
 
+### 模块架构
+
+控制台版与图形界面版是两套独立可执行程序,但**共用** `common/` 下的表结构与校验规则,并读写**同一个 SQLite 数据库**——既各自独立,又口径一致、数据互通。
+
+```mermaid
+flowchart TB
+    subgraph CONSOLE["控制台版 · src/"]
+        C1["main.cpp · 菜单循环"]
+        C2["personnel_system · Date / Employee / EmployeeList"]
+        C1 --> C2
+    end
+    subgraph GUI["图形界面版 · qt_gui/"]
+        G1["main.cpp · 启动窗口"]
+        G2["personnel_gui · MainWindow + Qt 模型/视图"]
+        G1 --> G2
+    end
+    subgraph COMMON["共享单一事实来源 · common/"]
+        S1["db_schema.h · 表结构"]
+        S2["employee_rules.h · 字段校验规则"]
+    end
+    DB[("SQLite 数据库<br/>data/employees.db")]
+    SEED["data/employees.txt<br/>种子数据(120 条)"]
+
+    C2 --> S1
+    C2 --> S2
+    G2 --> S1
+    G2 --> S2
+    C2 -- "sqlite3 C API" --> DB
+    G2 -- "Qt QSQLITE 驱动" --> DB
+    SEED -. "首次运行自动迁移" .-> DB
+```
+
+### 类设计(控制台版)
+
+三个核心类构成清晰的"组合"关系:`EmployeeList` 聚合多个 `Employee`,每个 `Employee` 内含一个 `Date`(生日)。字段全部私有 + 访问器,体现封装。
+
+```mermaid
+classDiagram
+    class Date {
+      -int year_
+      -int month_
+      -int day_
+      +toString() string
+      +toNumber() int
+      +parse(text) Date
+      +isValid() bool
+    }
+    class Employee {
+      -string name_
+      -string sex_
+      -string id_
+      -Date birthday_
+      -string number_
+      -string salary_
+      +serialize() string
+      +deserialize(line) Employee
+      +validate() void
+    }
+    class EmployeeList {
+      -string fileName_
+      -vector~Employee~ employees_
+      -unordered_map numberIndex_
+      +add() void
+      +remove() void
+      +modify() void
+      +load() void
+      +writeAllToDb() bool
+      +runQuery() vector~Employee~
+    }
+    EmployeeList o-- "0..*" Employee : 包含
+    Employee *-- "1" Date : 生日
+```
+
 ## 🛠️ 技术栈
 
 | 部分 | 技术 |
@@ -138,7 +211,25 @@ make                       # Windows(MinGW)上用 mingw32-make
 ## 📂 数据存储
 
 运行数据保存在 SQLite 数据库 `data/employees.db`(两端共用,表结构见 `common/db_schema.h`)。
-首次运行时若数据库为空,会自动从同目录的**种子文本文件** `data/employees.txt` 迁移并写回数据库。
+**仅首次运行(数据库文件尚不存在)**时,会自动从同目录的**种子文本文件** `data/employees.txt` 迁移并写回数据库;数据库一旦建立,其内容即为权威——即使被清空,重启后也不会再被种子还原。
+
+数据表 `employees` 以工作证号 `number` 为主键,薪水 `salary` 用 `REAL` 数值类型(便于 SQL 区间查询与排序),并在 `department` 上建索引以支撑按部门检索:
+
+```mermaid
+erDiagram
+    employees {
+        TEXT number PK "工作证号(主键, 唯一)"
+        TEXT name "姓名"
+        TEXT sex "性别"
+        TEXT id "身份证号"
+        TEXT birthday "生日 YYYY-MM-DD"
+        TEXT telephone "电话"
+        TEXT address "家庭地址"
+        REAL salary "薪水(数值)"
+        TEXT post "职务"
+        TEXT department "部门(建索引 idx_emp_department)"
+    }
+```
 
 种子文本文件为 UTF-8,每个员工占一行,10 个字段以 `|` 分隔:
 
@@ -157,6 +248,28 @@ make                       # Windows(MinGW)上用 mingw32-make
 ## 🏗️ 系统框架
 
 ![系统总框架图](architecture.png)
+
+### 数据流与工作流程
+
+下图描述从启动到日常操作的数据流向:启动时按"数据库是否已存在"决定是否从种子迁移;控制台版的增删改**实时写入数据库**(写穿透),高级查询则**下推到 SQL**直接在数据库上执行。
+
+```mermaid
+flowchart TD
+    A["启动程序"] --> B{"数据库文件已存在?"}
+    B -- "否 · 首次运行" --> C["从 employees.txt 种子迁移并写库"]
+    B -- "是" --> D["读取数据库到内存"]
+    C --> E["主菜单 / 主界面"]
+    D --> E
+    E --> F["增 / 删 / 改"]
+    E --> G["高级查询(部门 / 薪水区间 / 职务)"]
+    E --> H["统计 / 排序 / 导出 CSV"]
+    F -- "控制台: 写穿透 writeAllToDb()" --> DB[("SQLite 数据库")]
+    G -- "下推 SQL: WHERE / BETWEEN / LIKE + 索引" --> DB
+    DB -- "查询结果 / 最新数据" --> E
+    H --> E
+```
+
+> 图形界面版在内存中编辑、点「保存文件」显式写库(带未保存提示),并支持多级撤销 / 重做;两端最终都落到同一个 `data/employees.db`。
 
 ## 📖 使用说明
 

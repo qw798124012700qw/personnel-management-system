@@ -102,9 +102,9 @@ flowchart TB
     C2 --> S2
     G2 --> S1
     G2 --> S2
-    C2 -- "sqlite3 C API" --> DB
-    G2 -- "Qt QSQLITE 驱动" --> DB
-    SEED -. "首次运行自动迁移" .-> DB
+    C2 -->|"sqlite3 C API"| DB
+    G2 -->|"Qt QSQLITE 驱动"| DB
+    SEED -.->|"首次运行自动迁移"| DB
 ```
 
 ### 类设计(控制台版)
@@ -256,16 +256,16 @@ erDiagram
 ```mermaid
 flowchart TD
     A["启动程序"] --> B{"数据库文件已存在?"}
-    B -- "否 · 首次运行" --> C["从 employees.txt 种子迁移并写库"]
-    B -- "是" --> D["读取数据库到内存"]
+    B -->|"否 · 首次运行"| C["从 employees.txt 种子迁移并写库"]
+    B -->|"是"| D["读取数据库到内存"]
     C --> E["主菜单 / 主界面"]
     D --> E
     E --> F["增 / 删 / 改"]
     E --> G["高级查询(部门 / 薪水区间 / 职务)"]
     E --> H["统计 / 排序 / 导出 CSV"]
-    F -- "控制台: 写穿透 writeAllToDb()" --> DB[("SQLite 数据库")]
-    G -- "下推 SQL: WHERE / BETWEEN / LIKE + 索引" --> DB
-    DB -- "查询结果 / 最新数据" --> E
+    F -->|"控制台: 写穿透 writeAllToDb()"| DB[("SQLite 数据库")]
+    G -->|"下推 SQL: WHERE / BETWEEN / LIKE + 索引"| DB
+    DB -->|"查询结果 / 最新数据"| E
     H --> E
 ```
 

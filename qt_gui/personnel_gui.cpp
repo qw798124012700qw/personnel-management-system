@@ -9,6 +9,9 @@
 #include <QScreen>
 #include <QDate>
 #include <QDateEdit>
+#include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QFile>
@@ -26,6 +29,7 @@
 #include <QList>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSet>
@@ -87,9 +91,10 @@ static QString resolveDataFile() {
     return QDir(exeDir + "/data").absoluteFilePath("employees.db");
 }
 
-MainWindow::MainWindow() {
+MainWindow::MainWindow(bool readOnly) : readOnly(readOnly) {
+    roleName = readOnly ? "只读访客" : "管理员";
     dataFile = resolveDataFile(); // 必须在 loadFromFile() 之前确定数据库路径
-    setWindowTitle("人事管理系统 - Qt 图形界面");
+    setWindowTitle(QString("人事管理系统 - Qt 图形界面 [%1]").arg(roleName));
     // 默认尺寸自适应屏幕：不超过可用屏幕区域，避免在小屏 / 高分屏上窗口超出屏幕、底部按钮被挤出。
     QSize avail = QApplication::primaryScreen()->availableSize();
     resize(qMin(1180, avail.width() - 40), qMin(760, avail.height() - 50));
@@ -486,6 +491,7 @@ void MainWindow::buildButtons() {
     QPushButton *sortSalaryButton = new QPushButton("按薪水排序", buttonBox);
     QPushButton *exportButton = new QPushButton("导出CSV", buttonBox);
     QPushButton *importButton = new QPushButton("导入CSV", buttonBox);
+    QPushButton *auditButton = new QPushButton("审计日志", buttonBox);
     undoButton = new QPushButton("撤销", buttonBox);
     undoButton->setEnabled(false); // 无可撤销操作时禁用
     redoButton = new QPushButton("重做", buttonBox);
@@ -503,8 +509,17 @@ void MainWindow::buildButtons() {
     setupButton(sortSalaryButton, QStyle::SP_ArrowDown, "quiet");
     setupButton(exportButton, QStyle::SP_DialogSaveButton, "quiet");
     setupButton(importButton, QStyle::SP_DialogOpenButton, "quiet");
+    setupButton(auditButton, QStyle::SP_FileDialogContentsView, "quiet");
     setupButton(undoButton, QStyle::SP_ArrowBack, "quiet");
     setupButton(redoButton, QStyle::SP_ArrowForward, "quiet");
+
+    // 只读访客禁用所有写操作(增 / 删 / 改 / 导入)；撤销 / 重做因不会产生快照而始终为灰。
+    if (readOnly) {
+        for (QPushButton *b : {addButton, updateButton, deleteButton, importButton}) {
+            b->setEnabled(false);
+            b->setToolTip("只读访客不可执行写操作");
+        }
+    }
 
     layout->addWidget(addButton, 0, 0);
     layout->addWidget(updateButton, 0, 1);
@@ -520,10 +535,11 @@ void MainWindow::buildButtons() {
     layout->addWidget(importButton, 1, 5);
     layout->addWidget(undoButton, 2, 0);
     layout->addWidget(redoButton, 2, 1);
+    layout->addWidget(auditButton, 2, 2);
 
     statusLabel = new QLabel("就绪", buttonBox);
     statusLabel->setObjectName("statusText");
-    layout->addWidget(statusLabel, 2, 2, 1, 4);
+    layout->addWidget(statusLabel, 2, 3, 1, 3);
 
     // Qt 的信号槽机制：按钮 clicked 信号触发对应的业务函数。
     connect(addButton, &QPushButton::clicked, this, [this]() { addEmployee(); });
@@ -556,6 +572,7 @@ void MainWindow::buildButtons() {
     });
     connect(undoButton, &QPushButton::clicked, this, [this]() { undo(); });
     connect(redoButton, &QPushButton::clicked, this, [this]() { redo(); });
+    connect(auditButton, &QPushButton::clicked, this, [this]() { showAuditLog(); });
 }
 
 void MainWindow::setupButton(QPushButton *button, QStyle::StandardPixmap icon,
@@ -629,6 +646,7 @@ void MainWindow::addEmployee() {
     employees.append(employee);
     dirty = true;
     persist(); // 实时写入数据库(成功后清除 dirty)
+    logAudit("添加", "工号 " + employee.number);
     refreshTable();
     statusLabel->setText("添加成功");
 }
@@ -648,6 +666,7 @@ void MainWindow::updateEmployee() {
     employees[row] = employee;
     dirty = true;
     persist(); // 实时写入数据库(成功后清除 dirty)
+    logAudit("修改", "工号 " + employee.number);
     refreshTable();
     statusLabel->setText("修改成功");
 }
@@ -660,10 +679,12 @@ void MainWindow::deleteEmployee() {
         return;
     }
     if (QMessageBox::question(this, "确认删除", "确认删除选中的员工信息吗？") == QMessageBox::Yes) {
-        pushUndo(); // 改动前留快照,支持撤销
+        const QString num = employees[row].number; // 删除前记下工号(用于审计)
+        pushUndo();                                // 改动前留快照,支持撤销
         employees.removeAt(row);
         dirty = true;
         persist(); // 实时写入数据库(成功后清除 dirty)
+        logAudit("删除", "工号 " + num);
         refreshTable();
         clearForm();
         statusLabel->setText("删除成功");
@@ -1127,6 +1148,7 @@ void MainWindow::importCsv() {
     employees += imported;
     dirty = true;
     persist(); // 实时写入数据库(成功后清除 dirty)
+    logAudit("导入CSV", QString("导入 %1 条").arg(imported.size()));
     refreshTable();
     statusLabel->setText(QString("已导入 %1 条，跳过 %2 行").arg(imported.size()).arg(skipped));
 }
@@ -1157,6 +1179,7 @@ void MainWindow::undo() {
     employees = undoStack.takeLast(); // 恢复到上一步
     dirty = true;
     persist(); // 撤销后也实时写库,保持数据库与内存一致
+    logAudit("撤销", "");
     refreshTable();
     clearForm();
     updateUndoRedoButtons();
@@ -1172,6 +1195,7 @@ void MainWindow::redo() {
     employees = redoStack.takeLast();
     dirty = true;
     persist(); // 重做后也实时写库,保持数据库与内存一致
+    logAudit("重做", "");
     refreshTable();
     clearForm();
     updateUndoRedoButtons();
@@ -1194,4 +1218,59 @@ void MainWindow::restoreTableState() {
 void MainWindow::saveTableState() const {
     QSettings settings;
     settings.setValue("table/headerState", table->horizontalHeader()->saveState());
+}
+
+// 写一条审计日志(时间 / 角色 / 操作 / 细节)到数据库 audit_log 表。
+void MainWindow::logAudit(const QString &action, const QString &detail) {
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms_audit");
+        db.setDatabaseName(dataFile);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.exec(pms::kCreateAuditSql);
+            q.prepare("INSERT INTO audit_log (ts, role, action, detail) VALUES (?,?,?,?);");
+            q.addBindValue(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+            q.addBindValue(roleName);
+            q.addBindValue(action);
+            q.addBindValue(detail);
+            q.exec();
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase("pms_audit");
+}
+
+// 弹窗查看最近的审计日志(倒序最多 200 条)。
+void MainWindow::showAuditLog() {
+    QStringList lines;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms_audit");
+        db.setDatabaseName(dataFile);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.exec(pms::kCreateAuditSql);
+            q.exec("SELECT ts, role, action, detail FROM audit_log ORDER BY id DESC LIMIT 200;");
+            while (q.next()) {
+                lines << QString("%1  [%2]  %3  %4")
+                             .arg(q.value(0).toString(), q.value(1).toString(),
+                                  q.value(2).toString(), q.value(3).toString());
+            }
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase("pms_audit");
+
+    QDialog dlg(this);
+    dlg.setWindowTitle("审计日志(最近 200 条)");
+    dlg.resize(560, 420);
+    QVBoxLayout *lay = new QVBoxLayout(&dlg);
+    QPlainTextEdit *view = new QPlainTextEdit(&dlg);
+    view->setReadOnly(true);
+    view->setPlainText(lines.isEmpty() ? "(暂无审计记录)" : lines.join('\n'));
+    lay->addWidget(view);
+    QDialogButtonBox *box = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    lay->addWidget(box);
+    dlg.exec();
 }

@@ -23,6 +23,11 @@ inline const char *const kCreateTableSql =
 inline const char *const kCreateDeptIndexSql =
     "CREATE INDEX IF NOT EXISTS idx_emp_department ON employees(department);";
 
+// 审计日志表：记录谁(角色)在何时做了什么操作，便于追溯。
+inline const char *const kCreateAuditSql =
+    "CREATE TABLE IF NOT EXISTS audit_log ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, role TEXT, action TEXT, detail TEXT);";
+
 } // namespace pms
 
 #endif // PMS_DB_SCHEMA_H

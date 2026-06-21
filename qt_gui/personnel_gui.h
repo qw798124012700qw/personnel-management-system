@@ -43,7 +43,8 @@ struct Employee {
 // 主窗口类，负责界面创建、按钮事件、表格刷新和文件读写。
 class MainWindow : public QMainWindow {
   public:
-    MainWindow(); // 构造时搭建整个界面并加载数据文件
+    // readOnly=true 时为只读访客：禁用增 / 删 / 改 / 导入 / 撤销 / 重做等写操作。
+    explicit MainWindow(bool readOnly = false); // 构造时搭建整个界面并加载数据文件
 
   protected:
     // 关闭窗口时若有未保存改动，弹窗询问 保存 / 放弃 / 取消。
@@ -85,6 +86,8 @@ class MainWindow : public QMainWindow {
     void updateUndoRedoButtons(); // 按栈空/非空刷新撤销/重做按钮状态
     void restoreTableState();     // 启动时恢复列宽与排序状态
     void saveTableState() const;  // 退出时保存列宽与排序状态
+    void logAudit(const QString &action, const QString &detail); // 写一条审计日志
+    void showAuditLog();                                         // 弹窗查看最近审计日志
 
     QTableView *table = nullptr;            // 员工表格视图
     QStandardItemModel *model = nullptr;    // 表格数据模型
@@ -114,6 +117,8 @@ class MainWindow : public QMainWindow {
     QPushButton *undoButton = nullptr;    // 撤销按钮(随栈空/非空启用或禁用)
     QPushButton *redoButton = nullptr;    // 重做按钮(随栈空/非空启用或禁用)
     bool dirty = false;                   // 是否有未保存改动（增删改后置 true，存/读后清零）
+    bool readOnly = false;                // 只读访客：禁用所有写操作
+    QString roleName;                     // 当前身份名称(写入审计日志)
     // 数据库路径在构造时由 resolveDataFile() 相对 exe 位置智能定位（兼容开发布局与便携包）。
     QString dataFile;
 };

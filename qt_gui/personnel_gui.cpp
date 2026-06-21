@@ -154,6 +154,7 @@ MainWindow::MainWindow(bool readOnly) : readOnly(readOnly) {
     mainLayout->addWidget(buildHeader());
     mainLayout->addWidget(buildSearchBox());
     mainLayout->addWidget(table, 1);
+    mainLayout->addWidget(buildPager());
     mainLayout->addWidget(formBox);
     mainLayout->addWidget(buttonBox);
     setCentralWidget(central);
@@ -161,6 +162,8 @@ MainWindow::MainWindow(bool readOnly) : readOnly(readOnly) {
     // 点击表格某一行时，把该员工信息填入表单，方便修改。
     connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
             [this](const QModelIndex &current) { fillFormFromCurrentRow(current); });
+    // 点击列头排序后,代理行顺序变化,需重新按页隐藏行。
+    connect(proxy, &QSortFilterProxyModel::layoutChanged, this, [this]() { applyPaging(); });
 
     loadFromFile();
     refreshTable();
@@ -551,6 +554,78 @@ QWidget *MainWindow::buildSearchBox() {
     return box;
 }
 
+// 表格下方的分页控件：每页行数选择 + 上一页 / 下一页 + 页码。客户端分页(纯视图,不影响数据)。
+QWidget *MainWindow::buildPager() {
+    QWidget *bar = new QWidget(this);
+    QHBoxLayout *lay = new QHBoxLayout(bar);
+    lay->setContentsMargins(2, 0, 2, 0);
+    lay->setSpacing(8);
+
+    QLabel *sizeLabel = new QLabel("每页", bar);
+    QComboBox *sizeBox = new QComboBox(bar);
+    sizeBox->addItems({"20", "50", "100", "全部"});
+    sizeBox->setCurrentIndex(1); // 默认 50/页
+    QPushButton *prevBtn = new QPushButton("上一页", bar);
+    QPushButton *nextBtn = new QPushButton("下一页", bar);
+    pageLabel = new QLabel("第 1/1 页", bar);
+
+    lay->addWidget(sizeLabel);
+    lay->addWidget(sizeBox);
+    lay->addStretch(1);
+    lay->addWidget(prevBtn);
+    lay->addWidget(pageLabel);
+    lay->addWidget(nextBtn);
+
+    // 用下标判断页大小(末项=全部)，避免翻译"全部"文字后逻辑失效。
+    connect(sizeBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        static const int sizes[] = {20, 50, 100, 0};
+        pageSize = sizes[qBound(0, idx, 3)];
+        currentPage = 0;
+        applyPaging();
+    });
+    connect(prevBtn, &QPushButton::clicked, this, [this]() {
+        if (currentPage > 0) {
+            --currentPage;
+            applyPaging();
+        }
+    });
+    connect(nextBtn, &QPushButton::clicked, this, [this]() {
+        ++currentPage;
+        applyPaging(); // 内部会把页码夹在合法范围
+    });
+
+    // 国际化
+    addTr([this, sizeLabel] { sizeLabel->setText(tr2("每页", "Per page")); });
+    addTr([=] { prevBtn->setText(tr2("上一页", "Prev")); });
+    addTr([=] { nextBtn->setText(tr2("下一页", "Next")); });
+    addTr([this, sizeBox] { sizeBox->setItemText(3, tr2("全部", "All")); });
+
+    return bar;
+}
+
+// 按当前页大小/页码,隐藏当前页以外的表格行(对筛选/排序后的视图生效)。
+void MainWindow::applyPaging() {
+    if (!table || !pageLabel) {
+        return;
+    }
+    const int total = proxy->rowCount();
+    if (pageSize <= 0) { // 全部
+        for (int r = 0; r < total; ++r) {
+            table->setRowHidden(r, false);
+        }
+        pageLabel->setText(tr2("共 %1 条", "%1 rows").arg(total));
+        return;
+    }
+    const int pages = qMax(1, (total + pageSize - 1) / pageSize);
+    currentPage = qBound(0, currentPage, pages - 1);
+    const int start = currentPage * pageSize;
+    const int end = start + pageSize;
+    for (int r = 0; r < total; ++r) {
+        table->setRowHidden(r, !(r >= start && r < end));
+    }
+    pageLabel->setText(tr2("第 %1/%2 页", "Page %1/%2").arg(currentPage + 1).arg(pages));
+}
+
 // 创建操作按钮，并把按钮点击事件连接到对应函数。
 void MainWindow::buildButtons() {
     buttonBox = new QGroupBox("操作", this);
@@ -838,6 +913,7 @@ void MainWindow::refreshTable() {
         model->appendRow(row);
     }
     applyFilter();
+    applyPaging(); // 模型重建后按当前页重新隐藏行
     summaryLabel->setText(tr2("%1 条记录", "%1 records").arg(employees.size()));
     statusLabel->setText(
         tr2("当前共有 %1 条员工信息", "%1 employees in total").arg(employees.size()));
@@ -876,8 +952,10 @@ void MainWindow::applyFilter() {
     default:
         column = -1;
     }
+    currentPage = 0; // 筛选条件变化后回到第一页
     proxy->setFilterKeyColumn(column);
     proxy->setFilterFixedString(keywordEdit->text().trimmed());
+    applyPaging();
 }
 
 // 薪水区间查询使用两个输入框，并用弹窗显示结果。

@@ -58,7 +58,9 @@ class MainWindow : public QMainWindow {
     QWidget *buildHeader();    // 构建顶部标题栏
     void buildForm();          // 构建下方“编辑员工”表单
     QWidget *buildSearchBox(); // 构建左上“筛选/查询”区
+    QWidget *buildPager();     // 构建表格下方的分页控件
     void buildButtons();       // 构建操作按钮区
+    void applyPaging();        // 按当前页大小/页码,隐藏当前页以外的表格行
     void setupButton(QPushButton *button, QStyle::StandardPixmap icon,
                      const QString &variant); // 统一设置按钮图标与样式
     Employee formToEmployee() const;          // 把表单内容收集成一个 Employee
@@ -102,6 +104,9 @@ class MainWindow : public QMainWindow {
     QGroupBox *buttonBox = nullptr;         // 按钮分组框
     QLabel *statusLabel = nullptr;          // 状态提示标签
     QLabel *summaryLabel = nullptr;         // 汇总信息标签
+    QLabel *pageLabel = nullptr;            // 分页页码标签(第 X/Y 页)
+    int pageSize = 50;                      // 每页行数(0 表示不分页/全部)
+    int currentPage = 0;                    // 当前页(从 0 计)
 
     // 表单中的各输入控件
     QLineEdit *nameEdit = nullptr;        // 姓名输入

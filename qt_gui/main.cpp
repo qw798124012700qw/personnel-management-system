@@ -10,6 +10,9 @@ int main(int argc, char *argv[]) {
 #endif
     QApplication app(argc, argv);
     QApplication::setStyle("Fusion");
+    // 供 QSettings 记忆列宽/排序状态使用（确定配置存储位置）。
+    QApplication::setOrganizationName("PMS");
+    QApplication::setApplicationName("PersonnelManagementSystem");
     MainWindow window;
     window.show();
     return app.exec();

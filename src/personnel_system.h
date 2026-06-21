@@ -8,10 +8,14 @@
 // 以及若干供菜单使用的全局辅助函数。
 
 #include <cstddef>
+#include <functional>
 #include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// SQLite 语句句柄的前置声明（避免在头文件里包含 sqlite3.h）。
+struct sqlite3_stmt;
 
 // Date 类只负责日期本身：输入、格式化、闰年判断和合法性检查。
 class Date {
@@ -112,10 +116,14 @@ class EmployeeList {
     void countByDepartment() const; // 按部门统计人数
 
   private:
-    void searchByDepartment() const;  // 按部门精确查询
-    void searchBySalaryRange() const; // 按薪水区间查询
-    void searchByPostKeyword() const; // 按职务关键字模糊查询
-    void printSearchResult(const std::vector<const Employee *> &matches) const; // 统一输出查询结果
+    void searchByDepartment() const;  // 按部门精确查询（SQL）
+    void searchBySalaryRange() const; // 按薪水区间查询（SQL）
+    void searchByPostKeyword() const; // 按职务关键字模糊查询（SQL）
+    // 在数据库上执行 kSelectAll + whereOrder 的查询，bind 负责绑定占位符，返回结果集。
+    std::vector<Employee> runQuery(const std::string &whereOrder,
+                                   const std::function<void(sqlite3_stmt *)> &bind) const;
+    void printQueryResult(const std::vector<Employee> &matches) const; // 统一输出查询结果
+    bool writeAllToDb() const;     // 整表写回数据库（供 save 与每次增删改的写穿透共用）
     void salaryStatistics() const; // 统计薪水总额/平均/最高/最低
     std::vector<Employee>::iterator
     findByNumber(const std::string &number); // 按工作证号查找（可写）

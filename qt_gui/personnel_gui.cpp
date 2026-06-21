@@ -28,6 +28,8 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QSettings>
+#include <QShortcut>
 #include <QSize>
 #include <QSortFilterProxyModel>
 #include <QSqlDatabase>
@@ -39,7 +41,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include "../common/db_schema.h" // 与控制台版共用的数据库表结构
+#include "../common/db_schema.h"      // 与控制台版共用的数据库表结构
+#include "../common/employee_rules.h" // 与控制台版共用的字段校验规则
 
 // 读取旧文本数据文件时按 | 拆分，同时识别反斜杠转义(仅用于首次从 .txt 自动迁移到数据库)。
 static QStringList splitRecordLine(const QString &line) {
@@ -120,7 +123,8 @@ MainWindow::MainWindow() {
     table->verticalHeader()->setVisible(false);
     table->verticalHeader()->setDefaultSectionSize(38);
     table->horizontalHeader()->setStretchLastSection(true);
-    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    // Interactive：允许用户拖动调整列宽，便于记忆/恢复列宽（首次运行会自动按内容适配一次）。
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     table->horizontalHeader()->setMinimumSectionSize(92);
 
     // 下方表单和按钮分开构建，主构造函数保持清晰。
@@ -146,22 +150,34 @@ MainWindow::MainWindow() {
 
     loadFromFile();
     refreshTable();
+    restoreTableState(); // 恢复上次的列宽与排序状态（无记录则按内容自动适配一次）
+
+    // 键盘快捷键：Ctrl+Z 撤销，Ctrl+Y / Ctrl+Shift+Z 重做。
+    auto *undoSc = new QShortcut(QKeySequence::Undo, this);
+    connect(undoSc, &QShortcut::activated, this, [this]() { undo(); });
+    auto *redoSc = new QShortcut(QKeySequence::Redo, this);
+    connect(redoSc, &QShortcut::activated, this, [this]() { redo(); });
+    auto *redoSc2 = new QShortcut(QKeySequence("Ctrl+Shift+Z"), this);
+    connect(redoSc2, &QShortcut::activated, this, [this]() { redo(); });
 }
 
 // 关闭窗口时，若存在未保存的改动，提示用户 保存 / 放弃 / 取消。
 void MainWindow::closeEvent(QCloseEvent *event) {
     if (!dirty) {
-        event->accept(); // 没有改动，直接关闭
+        saveTableState(); // 记忆列宽/排序
+        event->accept();  // 没有改动，直接关闭
         return;
     }
     QMessageBox::StandardButton choice = QMessageBox::question(
         this, "退出", "有未保存的改动，是否保存后退出？",
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     if (choice == QMessageBox::Save) {
-        saveToFile(); // 保存（成功后 dirty 会被清零）
+        saveToFile();     // 保存（成功后 dirty 会被清零）
+        saveTableState(); // 记忆列宽/排序
         event->accept();
     } else if (choice == QMessageBox::Discard) {
-        event->accept(); // 放弃改动，直接关闭
+        saveTableState(); // 记忆列宽/排序
+        event->accept();  // 放弃改动，直接关闭
     } else {
         event->ignore(); // 取消，留在程序中
     }
@@ -470,6 +486,8 @@ void MainWindow::buildButtons() {
     QPushButton *exportButton = new QPushButton("导出CSV", buttonBox);
     undoButton = new QPushButton("撤销", buttonBox);
     undoButton->setEnabled(false); // 无可撤销操作时禁用
+    redoButton = new QPushButton("重做", buttonBox);
+    redoButton->setEnabled(false); // 无可重做操作时禁用
 
     setupButton(addButton, QStyle::SP_DialogApplyButton, "primary");
     setupButton(updateButton, QStyle::SP_BrowserReload, "primary");
@@ -483,6 +501,7 @@ void MainWindow::buildButtons() {
     setupButton(sortSalaryButton, QStyle::SP_ArrowDown, "quiet");
     setupButton(exportButton, QStyle::SP_DialogSaveButton, "quiet");
     setupButton(undoButton, QStyle::SP_ArrowBack, "quiet");
+    setupButton(redoButton, QStyle::SP_ArrowForward, "quiet");
 
     layout->addWidget(addButton, 0, 0);
     layout->addWidget(updateButton, 0, 1);
@@ -495,11 +514,12 @@ void MainWindow::buildButtons() {
     layout->addWidget(sortNumberButton, 1, 2);
     layout->addWidget(sortSalaryButton, 1, 3);
     layout->addWidget(exportButton, 1, 4);
-    layout->addWidget(undoButton, 1, 5);
+    layout->addWidget(undoButton, 2, 0);
+    layout->addWidget(redoButton, 2, 1);
 
     statusLabel = new QLabel("就绪", buttonBox);
     statusLabel->setObjectName("statusText");
-    layout->addWidget(statusLabel, 2, 0, 1, 6);
+    layout->addWidget(statusLabel, 2, 2, 1, 4);
 
     // Qt 的信号槽机制：按钮 clicked 信号触发对应的业务函数。
     connect(addButton, &QPushButton::clicked, this, [this]() { addEmployee(); });
@@ -527,6 +547,7 @@ void MainWindow::buildButtons() {
     });
     connect(exportButton, &QPushButton::clicked, this, [this]() { exportCsv(); });
     connect(undoButton, &QPushButton::clicked, this, [this]() { undo(); });
+    connect(redoButton, &QPushButton::clicked, this, [this]() { redo(); });
 }
 
 void MainWindow::setupButton(QPushButton *button, QStyle::StandardPixmap icon,
@@ -561,8 +582,14 @@ bool MainWindow::validateEmployee(const Employee &employee, int ignoreIndex) {
         QMessageBox::warning(this, "输入不完整", "请填写所有员工信息。");
         return false;
     }
-    if (!(employee.id.size() == 15 || employee.id.size() == 18)) {
-        QMessageBox::warning(this, "身份证号码错误", "身份证号码应为 15 位或 18 位。");
+    // 身份证、电话格式校验复用共享规则 pms::*（与控制台版完全一致）。
+    if (!pms::isValidId(employee.id.toStdString())) {
+        QMessageBox::warning(this, "身份证号码错误",
+                             "身份证号码应为 15 位或 18 位，最后一位可为 X。");
+        return false;
+    }
+    if (!pms::isValidPhone(employee.telephone.toStdString())) {
+        QMessageBox::warning(this, "电话号码错误", "电话号码应为 7-15 位，只能包含数字和短横线。");
         return false;
     }
     for (int i = 0; i < employees.size(); ++i) {
@@ -976,25 +1003,65 @@ void MainWindow::exportCsv() {
     statusLabel->setText(QString("已导出 %1 条到 %2").arg(employees.size()).arg(path));
 }
 
-// 在一次会增/删/改数据的操作前调用：保存当前数据快照，供撤销使用。
-void MainWindow::pushUndo() {
-    undoStack.append(employees);
+// 按撤销/重做栈的空满状态刷新两个按钮是否可用。
+void MainWindow::updateUndoRedoButtons() {
     if (undoButton) {
-        undoButton->setEnabled(true);
+        undoButton->setEnabled(!undoStack.isEmpty());
+    }
+    if (redoButton) {
+        redoButton->setEnabled(!redoStack.isEmpty());
     }
 }
 
-// 撤销上一次增/删/改：弹出最近的快照并恢复。
+// 在一次会增/删/改数据的操作前调用：保存当前数据快照(支持多级)，并清空重做栈。
+void MainWindow::pushUndo() {
+    undoStack.append(employees);
+    redoStack.clear(); // 一旦有新改动，之前被撤销的操作不能再重做
+    updateUndoRedoButtons();
+}
+
+// 撤销上一次增/删/改：把当前状态压入重做栈，再恢复撤销栈顶的快照。
 void MainWindow::undo() {
     if (undoStack.isEmpty()) {
         return;
     }
-    employees = undoStack.takeLast();
-    dirty = true; // 撤销后内存与磁盘可能不一致
+    redoStack.append(employees);      // 当前状态可供重做
+    employees = undoStack.takeLast(); // 恢复到上一步
+    dirty = true;                     // 撤销后内存与磁盘可能不一致
     refreshTable();
     clearForm();
-    if (undoButton) {
-        undoButton->setEnabled(!undoStack.isEmpty());
-    }
+    updateUndoRedoButtons();
     statusLabel->setText("已撤销上一步操作");
+}
+
+// 重做被撤销的操作：把当前状态压回撤销栈，再恢复重做栈顶的快照。
+void MainWindow::redo() {
+    if (redoStack.isEmpty()) {
+        return;
+    }
+    undoStack.append(employees);
+    employees = redoStack.takeLast();
+    dirty = true;
+    refreshTable();
+    clearForm();
+    updateUndoRedoButtons();
+    statusLabel->setText("已重做一步操作");
+}
+
+// 启动时恢复上次的列宽、列顺序与排序状态（header 的 saveState 已涵盖三者）。
+// 没有保存过的记录时，按内容自动适配一次列宽作为合理初值。
+void MainWindow::restoreTableState() {
+    QSettings settings;
+    QByteArray state = settings.value("table/headerState").toByteArray();
+    if (!state.isEmpty()) {
+        table->horizontalHeader()->restoreState(state);
+    } else {
+        table->resizeColumnsToContents();
+    }
+}
+
+// 退出时保存列宽、列顺序与排序状态。
+void MainWindow::saveTableState() const {
+    QSettings settings;
+    settings.setValue("table/headerState", table->horizontalHeader()->saveState());
 }

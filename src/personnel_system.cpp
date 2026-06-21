@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -11,7 +12,8 @@
 
 #include <sqlite3.h> // SQLite 嵌入式数据库 C API
 
-#include "../common/db_schema.h" // 与图形界面版共用的数据库表结构
+#include "../common/db_schema.h"      // 与图形界面版共用的数据库表结构
+#include "../common/employee_rules.h" // 与图形界面版共用的字段校验规则
 
 using namespace std;
 
@@ -36,23 +38,9 @@ string lowerCopy(string value) {
 
 string readLine(const string &prompt);
 
-// 判断薪水输入是否合法：允许整数或一位小数点的非负数字。
+// 判断薪水输入是否合法：复用共享规则 pms::isMoney（单一事实来源）。
 bool isMoney(const string &value) {
-    if (value.empty()) {
-        return false;
-    }
-    bool dotSeen = false;
-    bool digitSeen = false;
-    for (char ch : value) {
-        if (isdigit(static_cast<unsigned char>(ch))) {
-            digitSeen = true;
-        } else if (ch == '.' && !dotSeen) {
-            dotSeen = true;
-        } else {
-            return false;
-        }
-    }
-    return digitSeen;
+    return pms::isMoney(value);
 }
 
 // 将字符串形式的薪水转换成 double，便于统计和排序。
@@ -461,21 +449,11 @@ string Employee::readSex(const string &prompt) {
     }
 }
 
-// 身份证简单校验：15 位或 18 位，18 位最后一位可以是 X。
+// 身份证校验复用共享规则 pms::isValidId；合法时把末位 x 统一成大写 X。
 string Employee::readIdentity(const string &prompt) {
     while (true) {
         string value = readRequired(prompt);
-        bool lengthOk = value.size() == 15 || value.size() == 18;
-        bool charsOk = true;
-        for (size_t i = 0; i < value.size(); ++i) {
-            char ch = value[i];
-            if (!isdigit(static_cast<unsigned char>(ch)) &&
-                !(i == value.size() - 1 && (ch == 'X' || ch == 'x'))) {
-                charsOk = false;
-                break;
-            }
-        }
-        if (lengthOk && charsOk) {
+        if (pms::isValidId(value)) {
             if (!value.empty() && value.back() == 'x') {
                 value.back() = 'X';
             }
@@ -485,17 +463,11 @@ string Employee::readIdentity(const string &prompt) {
     }
 }
 
-// 电话号码允许数字和短横线，长度控制在常见范围内。
+// 电话号码校验复用共享规则 pms::isValidPhone。
 string Employee::readTelephone(const string &prompt) {
     while (true) {
         string value = readRequired(prompt);
-        bool ok = value.size() >= 7 && value.size() <= 15;
-        for (char ch : value) {
-            if (!isdigit(static_cast<unsigned char>(ch)) && ch != '-') {
-                ok = false;
-            }
-        }
-        if (ok) {
+        if (pms::isValidPhone(value)) {
             return value;
         }
         cout << "电话号码长度应为 7-15 位，只能包含数字和短横线。\n";
@@ -513,11 +485,21 @@ string Employee::readSalary(const string &prompt) {
     }
 }
 
-// 从文件读取后做一次基本校验，防止异常数据进入系统。
+// 从文件/数据库读取后做一次校验，防止异常数据进入系统。
+// 校验规则与录入时一致（均来自 common/employee_rules.h），保证两端及读写口径统一。
 void Employee::validate() const {
     if (name_.empty() || sex_.empty() || id_.empty() || telephone_.empty() || number_.empty() ||
         address_.empty() || salary_.empty() || post_.empty() || department_.empty()) {
         throw invalid_argument("员工记录包含空字段");
+    }
+    if (!pms::isValidSex(sex_)) {
+        throw invalid_argument("性别格式错误");
+    }
+    if (!pms::isValidId(id_)) {
+        throw invalid_argument("身份证号码格式错误");
+    }
+    if (!pms::isValidPhone(telephone_)) {
+        throw invalid_argument("电话号码格式错误");
     }
     if (!isMoney(salary_)) {
         throw invalid_argument("薪水格式错误");
@@ -535,6 +517,7 @@ void EmployeeList::add() {
     }
     employees_.push_back(employee);
     numberIndex_[employee.number()] = employees_.size() - 1; // 增量维护索引
+    writeAllToDb();                                          // 实时写入数据库
     cout << "添加成功。\n";
 }
 
@@ -586,6 +569,7 @@ void EmployeeList::modify() {
         employee->modifyNumberOnly(oldNumber);
     }
     rebuildIndex(); // 修改可能改动了工作证号，重建索引
+    writeAllToDb(); // 实时写入数据库
 }
 
 // 删除时先查找，再让用户确认，避免误删。
@@ -603,6 +587,7 @@ void EmployeeList::remove() {
     if (askYesNo("确认删除员工 " + employees_[index].name() + " ? (y/n): ")) {
         employees_.erase(employees_.begin() + static_cast<long>(index));
         rebuildIndex(); // 删除导致后续下标移动，重建索引
+        writeAllToDb(); // 实时写入数据库
         cout << "删除成功。\n";
     } else {
         cout << "已取消删除。\n";
@@ -618,6 +603,7 @@ void EmployeeList::deleteAll() {
     if (askYesNo("确认清空全部员工信息? 此操作不可撤销 (y/n): ")) {
         employees_.clear();
         numberIndex_.clear();
+        writeAllToDb(); // 实时写入数据库（清空表）
         cout << "全部员工信息已清空。\n";
     } else {
         cout << "已取消清空。\n";
@@ -641,13 +627,38 @@ static string textPathOf(const string &dbPath) {
     return dbPath + ".txt";
 }
 
-// 保存：清空表后把全部员工写回数据库,整个过程放在一个事务里保证一致性。
-void EmployeeList::save() const {
+// 从查询结果的一行构造 Employee。列顺序须与下面各 SELECT 一致：
+// (name, sex, id, birthday, telephone, number, address, salary, post, department)。
+// salary 列为 REAL，按数值读出再格式化；其余按文本读出。拼成竖线分隔串后复用 deserialize 校验。
+static Employee rowToEmployee(sqlite3_stmt *stmt) {
+    stringstream ss;
+    for (int i = 0; i < 10; ++i) {
+        if (i > 0) {
+            ss << '|';
+        }
+        if (i == 7) {
+            ss << escapeField(formatMoney(sqlite3_column_double(stmt, i)));
+        } else {
+            const unsigned char *t = sqlite3_column_text(stmt, i);
+            ss << escapeField(t ? reinterpret_cast<const char *>(t) : "");
+        }
+    }
+    return Employee::deserialize(ss.str());
+}
+
+// 列出全部字段、保持统一顺序的 SELECT 前缀；各查询在其后追加 WHERE / ORDER BY。
+static const char *kSelectAll =
+    "SELECT name, sex, id, birthday, telephone, number, address, salary, post, department "
+    "FROM employees";
+
+// 整表写回数据库（清空后重插，事务保证一致性）。供 save() 与每次增删改的写穿透共用。
+// 返回是否成功；失败时打印错误并回滚。
+bool EmployeeList::writeAllToDb() const {
     sqlite3 *db = nullptr;
     if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
-        cout << "无法打开数据库 " << fileName_ << " 进行保存。\n";
+        cout << "无法打开数据库 " << fileName_ << "：" << sqlite3_errmsg(db) << "\n";
         sqlite3_close(db);
-        return;
+        return false;
     }
     ensureSchema(db);
     sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
@@ -657,10 +668,10 @@ void EmployeeList::save() const {
     const char *sql = "INSERT INTO employees (number, name, sex, id, birthday, telephone, "
                       "address, salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        cout << "保存失败：" << sqlite3_errmsg(db) << "\n";
+        cout << "写入数据库失败：" << sqlite3_errmsg(db) << "\n";
         sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(db);
-        return;
+        return false;
     }
     for (const Employee &e : employees_) {
         // SQLITE_TRANSIENT 让 SQLite 立即复制字符串,避免临时量悬空。
@@ -681,11 +692,20 @@ void EmployeeList::save() const {
     sqlite3_finalize(stmt);
     sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     sqlite3_close(db);
-    cout << "已保存 " << employees_.size() << " 条员工信息到数据库 " << fileName_ << "。\n";
+    return true;
 }
 
-// 读取：从数据库读取全部员工。首次运行(库为空)时自动从旧的同名 .txt 文本文件迁移并写回数据库。
+// 手动保存（菜单项）：写回数据库并提示。增删改已实时写库，本项相当于再确认一次。
+void EmployeeList::save() const {
+    if (writeAllToDb()) {
+        cout << "已保存 " << employees_.size() << " 条员工信息到数据库 " << fileName_ << "。\n";
+    }
+}
+
+// 读取：从数据库读取全部员工。仅当数据库文件原本不存在(真正首次运行)时，才从同名 .txt
+// 种子文件迁移；数据库一旦建立，其内容(哪怕被清空)即为权威，不会再被种子还原。
 void EmployeeList::load() {
+    const bool dbExisted = ifstream(fileName_).good(); // 必须在 sqlite3_open 建文件前判断
     sqlite3 *db = nullptr;
     if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
         cout << "无法打开数据库 " << fileName_ << "：" << sqlite3_errmsg(db) << "\n";
@@ -698,26 +718,13 @@ void EmployeeList::load() {
     numberIndex_.clear();
     int skipped = 0;
 
-    // 逐行读取;把各列按序列化顺序拼成一行,复用 deserialize 的字段校验。
+    // 逐行读取并复用 rowToEmployee（内部走 deserialize 校验）。
     sqlite3_stmt *stmt = nullptr;
-    const char *sql = "SELECT name, sex, id, birthday, telephone, number, address, salary, "
-                      "post, department FROM employees;";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+    const string sql = string(kSelectAll) + ";";
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            stringstream ss;
-            for (int i = 0; i < 10; ++i) {
-                if (i > 0) {
-                    ss << '|';
-                }
-                if (i == 7) { // salary 列为 REAL，按数值读出再格式化
-                    ss << escapeField(formatMoney(sqlite3_column_double(stmt, i)));
-                } else {
-                    const unsigned char *t = sqlite3_column_text(stmt, i);
-                    ss << escapeField(t ? reinterpret_cast<const char *>(t) : "");
-                }
-            }
             try {
-                Employee employee = Employee::deserialize(ss.str());
+                Employee employee = rowToEmployee(stmt);
                 if (numberIndex_.count(employee.number()) == 0) {
                     numberIndex_[employee.number()] = loaded.size();
                     loaded.push_back(employee);
@@ -733,8 +740,9 @@ void EmployeeList::load() {
     sqlite3_close(db);
     employees_ = loaded;
 
-    // 数据库为空但存在旧文本文件 -> 自动迁移:读入文本后写回数据库。
-    if (employees_.empty()) {
+    // 仅"首次运行(数据库文件原本不存在)且当前为空"才从种子文本迁移；
+    // 已存在的数据库即使为空也尊重其状态(例如用户主动清空后不再被种子还原)。
+    if (employees_.empty() && !dbExisted) {
         ifstream in(textPathOf(fileName_));
         if (in) {
             string line;
@@ -753,7 +761,7 @@ void EmployeeList::load() {
                 }
             }
             if (!employees_.empty()) {
-                save(); // 写入数据库,完成迁移
+                writeAllToDb(); // 写入数据库,完成迁移
                 cout << "(已从文本文件 " << textPathOf(fileName_) << " 自动迁移 "
                      << employees_.size() << " 条到数据库)\n";
                 return;
@@ -900,53 +908,37 @@ void EmployeeList::countByDepartment() const {
     }
 }
 
-// 部门查询采用精确匹配，适合查找某个部门全部员工。
-void EmployeeList::searchByDepartment() const {
-    string department = readRequired("请输入部门名称: ");
-    vector<const Employee *> matches;
-    for (size_t i = 0; i < employees_.size(); ++i) {
-        if (employees_[i].department() == department) {
-            matches.push_back(&employees_[i]);
-        }
+// 高级查询统一走数据库 SQL：在 kSelectAll 后追加 whereOrder 子句并执行，bind 负责绑定占位符。
+// 增删改已实时写库（writeAllToDb），故数据库即当前数据，查询结果始终准确。
+vector<Employee> EmployeeList::runQuery(const string &whereOrder,
+                                        const function<void(sqlite3_stmt *)> &bind) const {
+    vector<Employee> result;
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
+        cout << "无法打开数据库 " << fileName_ << "：" << sqlite3_errmsg(db) << "\n";
+        sqlite3_close(db);
+        return result;
     }
-    printSearchResult(matches);
+    ensureSchema(db);
+    const string sql = string(kSelectAll) + " " + whereOrder + ";";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        bind(stmt);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            try {
+                result.push_back(rowToEmployee(stmt));
+            } catch (const exception &) {
+                // 跳过异常行
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_close(db);
+    return result;
 }
 
-// 薪水区间查询：如果最低值大于最高值，自动交换。
-void EmployeeList::searchBySalaryRange() const {
-    double minSalary = readMoneyValue("请输入最低薪水: ");
-    double maxSalary = readMoneyValue("请输入最高薪水: ");
-    if (minSalary > maxSalary) {
-        double temp = minSalary;
-        minSalary = maxSalary;
-        maxSalary = temp;
-    }
-
-    vector<const Employee *> matches;
-    for (size_t i = 0; i < employees_.size(); ++i) {
-        double salary = employees_[i].salaryValue();
-        if (salary >= minSalary && salary <= maxSalary) {
-            matches.push_back(&employees_[i]);
-        }
-    }
-    printSearchResult(matches);
-}
-
-// 职务关键字查询采用模糊匹配，输入“工程”可匹配“软件工程师”等。
-void EmployeeList::searchByPostKeyword() const {
-    string keyword = lowerCopy(readRequired("请输入职务关键字: "));
-    vector<const Employee *> matches;
-    for (size_t i = 0; i < employees_.size(); ++i) {
-        string post = lowerCopy(employees_[i].post());
-        if (post.find(keyword) != string::npos) {
-            matches.push_back(&employees_[i]);
-        }
-    }
-    printSearchResult(matches);
-}
-
-// 高级查询结果统一用简表输出，避免重复代码。
-void EmployeeList::printSearchResult(const vector<const Employee *> &matches) const {
+// 高级查询结果统一用简表输出。
+void EmployeeList::printQueryResult(const vector<Employee> &matches) const {
     if (matches.empty()) {
         cout << "未找到匹配员工。\n";
         return;
@@ -954,8 +946,43 @@ void EmployeeList::printSearchResult(const vector<const Employee *> &matches) co
     cout << "找到 " << matches.size() << " 条记录:\n";
     printBriefHeader(cout);
     for (size_t i = 0; i < matches.size(); ++i) {
-        matches[i]->printBrief(cout, static_cast<int>(i + 1));
+        matches[i].printBrief(cout, static_cast<int>(i + 1));
     }
+}
+
+// 部门查询：SQL 精确匹配（WHERE department = ?，走部门索引）。
+void EmployeeList::searchByDepartment() const {
+    string department = readRequired("请输入部门名称: ");
+    vector<Employee> matches =
+        runQuery("WHERE department = ? ORDER BY number", [&](sqlite3_stmt *s) {
+            sqlite3_bind_text(s, 1, department.c_str(), -1, SQLITE_TRANSIENT);
+        });
+    printQueryResult(matches);
+}
+
+// 薪水区间查询：SQL 数值区间（WHERE salary BETWEEN ? AND ?）；最低值大于最高值时自动交换。
+void EmployeeList::searchBySalaryRange() const {
+    double minSalary = readMoneyValue("请输入最低薪水: ");
+    double maxSalary = readMoneyValue("请输入最高薪水: ");
+    if (minSalary > maxSalary) {
+        std::swap(minSalary, maxSalary);
+    }
+    vector<Employee> matches =
+        runQuery("WHERE salary BETWEEN ? AND ? ORDER BY salary", [&](sqlite3_stmt *s) {
+            sqlite3_bind_double(s, 1, minSalary);
+            sqlite3_bind_double(s, 2, maxSalary);
+        });
+    printQueryResult(matches);
+}
+
+// 职务关键字查询：SQL 模糊匹配（WHERE post LIKE '%关键字%'），输入“工程”可匹配“软件工程师”。
+void EmployeeList::searchByPostKeyword() const {
+    string keyword = readRequired("请输入职务关键字: ");
+    string pattern = "%" + keyword + "%";
+    vector<Employee> matches = runQuery("WHERE post LIKE ? ORDER BY number", [&](sqlite3_stmt *s) {
+        sqlite3_bind_text(s, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    });
+    printQueryResult(matches);
 }
 
 // 统计总薪水、平均薪水、最高薪水和最低薪水。

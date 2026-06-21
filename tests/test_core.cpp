@@ -1,6 +1,7 @@
 // 人事管理系统核心逻辑单元测试（零第三方依赖，自带极简断言框架）。
 //
 // 覆盖范围：
+//   - 共享校验规则 pms::*（性别/身份证/电话/薪水）
 //   - Date：闰年/合法性校验、toString / toNumber / parse
 //   - Employee：serialize / deserialize 往返一致性、字段转义、非法输入拒绝
 //
@@ -9,6 +10,8 @@
 // 退出码 0 表示全部通过，非 0 表示有失败用例（便于 CI 判定）。
 
 #include "../src/personnel_system.h"
+
+#include "../common/employee_rules.h"
 
 #include <exception>
 #include <iostream>
@@ -44,6 +47,35 @@ template <typename F> void checkThrows(F &&fn, const char *what, const char *fil
     }
 }
 #define CHECK_THROWS(fn) checkThrows([&]() { fn; }, #fn, __FILE__, __LINE__)
+
+void testRules() {
+    std::cout << "[共享校验规则 pms::*]\n";
+    // 性别
+    CHECK(pms::isValidSex("男"));
+    CHECK(pms::isValidSex("女"));
+    CHECK(!pms::isValidSex("M"));
+    CHECK(!pms::isValidSex(""));
+    // 身份证：15 / 18 位，末位可 X/x
+    CHECK(pms::isValidId("110101199001011234"));  // 18 位
+    CHECK(pms::isValidId("11010119900101123X"));  // 18 位末位 X
+    CHECK(pms::isValidId("11010119900101x"));     // 15 位末位 x
+    CHECK(!pms::isValidId("12345"));              // 长度不对
+    CHECK(!pms::isValidId("11010119900101123A")); // 含非法字母
+    CHECK(!pms::isValidId("1101011990010112X4")); // X 不在末位
+    // 电话：7-15 位，数字与短横线
+    CHECK(pms::isValidPhone("13800138000"));
+    CHECK(pms::isValidPhone("010-1234567"));
+    CHECK(!pms::isValidPhone("123"));              // 太短
+    CHECK(!pms::isValidPhone("1234567890123456")); // 太长
+    CHECK(!pms::isValidPhone("138a0013800"));      // 含字母
+    // 薪水：非负数字，至多一个小数点
+    CHECK(pms::isMoney("8500"));
+    CHECK(pms::isMoney("8500.50"));
+    CHECK(!pms::isMoney(""));
+    CHECK(!pms::isMoney("8500.5.0")); // 两个小数点
+    CHECK(!pms::isMoney("-100"));     // 负号
+    CHECK(!pms::isMoney("8500abc"));  // 含字母
+}
 
 void testDate() {
     std::cout << "[Date]\n";
@@ -109,6 +141,7 @@ void testEmployeeRejectsBadInput() {
 
 int main() {
     std::cout << "运行核心逻辑单元测试...\n";
+    testRules();
     testDate();
     testEmployeeRoundTrip();
     testEmployeeEscaping();

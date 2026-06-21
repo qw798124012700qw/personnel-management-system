@@ -19,11 +19,11 @@ int main() {
     std::cin.tie(nullptr);
 
     try {
-        // 程序启动时自动读取数据文件，退出时可选择是否保存。
+        // 程序启动时自动读取数据库；之后增删改实时写入数据库，退出无需手动保存。
         EmployeeList employees("data/employees.db");
         employees.load();
 
-        // 主循环：显示菜单 → 读取用户选择(0-11) → 调用对应功能；选 0 时询问是否保存并退出。
+        // 主循环：显示菜单 → 读取用户选择(0-11) → 调用对应功能；选 0 直接退出（数据已实时保存）。
         while (true) {
             printMenu();
             int choice = readMenuChoice(0, 11);
@@ -62,10 +62,8 @@ int main() {
                 employees.statisticsMenu();
                 break;
             case 0:
-                if (askYesNo("是否保存后退出? (y/n): ")) {
-                    employees.save();
-                }
-                std::cout << "系统已退出。\n";
+                // 增删改已实时写入数据库，无需在退出时再保存。
+                std::cout << "数据已实时保存，系统已退出。\n";
                 return 0;
             }
         }

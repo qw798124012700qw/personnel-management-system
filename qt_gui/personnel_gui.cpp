@@ -627,7 +627,8 @@ void MainWindow::addEmployee() {
     }
     pushUndo(); // 改动前留快照,支持撤销
     employees.append(employee);
-    dirty = true; // 标记有未保存改动
+    dirty = true;
+    persist(); // 实时写入数据库(成功后清除 dirty)
     refreshTable();
     statusLabel->setText("添加成功");
 }
@@ -645,7 +646,8 @@ void MainWindow::updateEmployee() {
     }
     pushUndo(); // 改动前留快照,支持撤销
     employees[row] = employee;
-    dirty = true; // 标记有未保存改动
+    dirty = true;
+    persist(); // 实时写入数据库(成功后清除 dirty)
     refreshTable();
     statusLabel->setText("修改成功");
 }
@@ -660,7 +662,8 @@ void MainWindow::deleteEmployee() {
     if (QMessageBox::question(this, "确认删除", "确认删除选中的员工信息吗？") == QMessageBox::Yes) {
         pushUndo(); // 改动前留快照,支持撤销
         employees.removeAt(row);
-        dirty = true; // 标记有未保存改动
+        dirty = true;
+        persist(); // 实时写入数据库(成功后清除 dirty)
         refreshTable();
         clearForm();
         statusLabel->setText("删除成功");
@@ -911,7 +914,7 @@ void MainWindow::loadFromFile() {
             }
             file.close();
             if (!employees.isEmpty()) {
-                saveToFile(); // 写入数据库,完成迁移
+                persist(); // 写入数据库,完成迁移
                 statusLabel->setText(
                     QString("已从文本文件迁移 %1 条到数据库").arg(employees.size()));
                 return;
@@ -922,8 +925,9 @@ void MainWindow::loadFromFile() {
     statusLabel->setText(QString("已从数据库读取 %1 条员工信息").arg(employees.size()));
 }
 
-// 保存到 SQLite 数据库：清空表后整表重写(放在事务里)。与控制台版共用同一数据库。
-void MainWindow::saveToFile() {
+// 把当前内存中的全部员工整表写回数据库(事务保证一致性)。返回是否成功，不改状态栏。
+// 供「保存文件」按钮与每次增删改的写穿透共用——使图形界面版与控制台版同样以数据库为实时数据源。
+bool MainWindow::persist() {
     bool ok = false;
     // 把 db 限制在内层作用域：必须在 removeDatabase 之前析构，否则 Qt 会报
     // “connection 'pms' is still in use”。
@@ -931,7 +935,7 @@ void MainWindow::saveToFile() {
         QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "pms");
         db.setDatabaseName(dataFile);
         if (!db.open()) {
-            QMessageBox::warning(this, "保存失败", "无法打开数据库。");
+            QMessageBox::warning(this, "写入失败", "无法打开数据库。");
         } else {
             QSqlQuery q(db);
             q.exec(pms::kCreateTableSql);
@@ -959,11 +963,17 @@ void MainWindow::saveToFile() {
         }
     }
     QSqlDatabase::removeDatabase("pms");
-    if (!ok) {
-        return;
+    if (ok) {
+        dirty = false; // 已与数据库同步
     }
-    dirty = false;
-    statusLabel->setText(QString("已保存 %1 条员工信息到数据库").arg(employees.size()));
+    return ok;
+}
+
+// 「保存文件」按钮：手动整表写回。增删改已实时写库，本项相当于再确认保存一次。
+void MainWindow::saveToFile() {
+    if (persist()) {
+        statusLabel->setText(QString("已保存 %1 条员工信息到数据库").arg(employees.size()));
+    }
 }
 
 // 按 CSV 规则转义单个字段：含逗号/引号/换行时用双引号包裹，内部双引号翻倍。
@@ -1116,6 +1126,7 @@ void MainWindow::importCsv() {
     pushUndo(); // 改动前留快照,支持撤销
     employees += imported;
     dirty = true;
+    persist(); // 实时写入数据库(成功后清除 dirty)
     refreshTable();
     statusLabel->setText(QString("已导入 %1 条，跳过 %2 行").arg(imported.size()).arg(skipped));
 }
@@ -1144,7 +1155,8 @@ void MainWindow::undo() {
     }
     redoStack.append(employees);      // 当前状态可供重做
     employees = undoStack.takeLast(); // 恢复到上一步
-    dirty = true;                     // 撤销后内存与磁盘可能不一致
+    dirty = true;
+    persist(); // 撤销后也实时写库,保持数据库与内存一致
     refreshTable();
     clearForm();
     updateUndoRedoButtons();
@@ -1159,6 +1171,7 @@ void MainWindow::redo() {
     undoStack.append(employees);
     employees = redoStack.takeLast();
     dirty = true;
+    persist(); // 重做后也实时写库,保持数据库与内存一致
     refreshTable();
     clearForm();
     updateUndoRedoButtons();

@@ -75,15 +75,16 @@ class MainWindow : public QMainWindow {
     void showDepartmentStatistics();                         // 弹窗显示部门人数统计
     void showSalaryStatistics();                             // 弹窗显示薪水统计
     void loadFromFile();                                     // 从数据文件读取员工
-    void saveToFile();                                       // 保存员工到数据文件
-    void exportCsv();                                        // 导出为 CSV(可用 Excel 打开)
-    void importCsv();                                        // 从 CSV 导入(校验+去重)
-    void pushUndo();                                         // 增/删/改前记录一次快照(并清空重做栈)
-    void undo();                                             // 撤销上一次增/删/改(支持多级)
-    void redo();                                             // 重做被撤销的操作(支持多级)
-    void updateUndoRedoButtons();                            // 按栈空/非空刷新撤销/重做按钮状态
-    void restoreTableState();                                // 启动时恢复列宽与排序状态
-    void saveTableState() const;                             // 退出时保存列宽与排序状态
+    bool persist();               // 整表写回数据库(写穿透核心,返回是否成功)
+    void saveToFile();            // 「保存文件」按钮:手动写回 + 状态提示
+    void exportCsv();             // 导出为 CSV(可用 Excel 打开)
+    void importCsv();             // 从 CSV 导入(校验+去重)
+    void pushUndo();              // 增/删/改前记录一次快照(并清空重做栈)
+    void undo();                  // 撤销上一次增/删/改(支持多级)
+    void redo();                  // 重做被撤销的操作(支持多级)
+    void updateUndoRedoButtons(); // 按栈空/非空刷新撤销/重做按钮状态
+    void restoreTableState();     // 启动时恢复列宽与排序状态
+    void saveTableState() const;  // 退出时保存列宽与排序状态
 
     QTableView *table = nullptr;            // 员工表格视图
     QStandardItemModel *model = nullptr;    // 表格数据模型

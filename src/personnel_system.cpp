@@ -506,6 +506,32 @@ void Employee::validate() const {
     }
 }
 
+// INSERT 语句及其列序；bindEmployee 按此顺序绑定占位符 1..10。
+static const char *kInsertSql =
+    "INSERT INTO employees (number, name, sex, id, birthday, telephone, "
+    "address, salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);";
+
+// UPDATE 语句：占位符 1..10 为新值(列序同 INSERT)，11 为 WHERE 用的旧工作证号。
+static const char *kUpdateSql =
+    "UPDATE employees SET number=?, name=?, sex=?, id=?, birthday=?, telephone=?, "
+    "address=?, salary=?, post=?, department=? WHERE number=?;";
+
+// 把一个 Employee 的字段按 INSERT 列序(占位符 1..10)绑定到已准备好的语句。
+// 用 SQLITE_TRANSIENT 让 SQLite 立即复制，避免临时串(如 birthday)悬空。
+static void bindEmployee(sqlite3_stmt *stmt, const Employee &e) {
+    const string bd = e.birthday().toString();
+    sqlite3_bind_text(stmt, 1, e.number().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, e.name().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, e.sex().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, e.id().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, bd.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, e.telephone().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, e.address().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 8, e.salaryValue()); // salary 列为 REAL，按数值存储
+    sqlite3_bind_text(stmt, 9, e.post().c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 10, e.department().c_str(), -1, SQLITE_TRANSIENT);
+}
+
 EmployeeList::EmployeeList(string fileName) : fileName_(std::move(fileName)) {}
 
 void EmployeeList::add() {
@@ -517,7 +543,8 @@ void EmployeeList::add() {
     }
     employees_.push_back(employee);
     numberIndex_[employee.number()] = employees_.size() - 1; // 增量维护索引
-    writeAllToDb();                                          // 实时写入数据库
+    // 增量单行写入：只 INSERT 这一条(数据库为实时数据源)。
+    execWrite(kInsertSql, [&](sqlite3_stmt *s) { bindEmployee(s, employee); });
     cout << "添加成功。\n";
 }
 
@@ -569,7 +596,11 @@ void EmployeeList::modify() {
         employee->modifyNumberOnly(oldNumber);
     }
     rebuildIndex(); // 修改可能改动了工作证号，重建索引
-    writeAllToDb(); // 实时写入数据库
+    // 增量单行写入：UPDATE 该行(占位符 11 为旧工作证号,支持工作证号被改的情况)。
+    execWrite(kUpdateSql, [&](sqlite3_stmt *s) {
+        bindEmployee(s, *employee);
+        sqlite3_bind_text(s, 11, oldNumber.c_str(), -1, SQLITE_TRANSIENT);
+    });
 }
 
 // 删除时先查找，再让用户确认，避免误删。
@@ -585,9 +616,13 @@ void EmployeeList::remove() {
         return;
     }
     if (askYesNo("确认删除员工 " + employees_[index].name() + " ? (y/n): ")) {
+        const string num = employees_[index].number(); // 删除前记下工作证号(用于 SQL)
         employees_.erase(employees_.begin() + static_cast<long>(index));
         rebuildIndex(); // 删除导致后续下标移动，重建索引
-        writeAllToDb(); // 实时写入数据库
+        // 增量单行写入：只 DELETE 这一条。
+        execWrite("DELETE FROM employees WHERE number = ?;", [&](sqlite3_stmt *s) {
+            sqlite3_bind_text(s, 1, num.c_str(), -1, SQLITE_TRANSIENT);
+        });
         cout << "删除成功。\n";
     } else {
         cout << "已取消删除。\n";
@@ -603,7 +638,7 @@ void EmployeeList::deleteAll() {
     if (askYesNo("确认清空全部员工信息? 此操作不可撤销 (y/n): ")) {
         employees_.clear();
         numberIndex_.clear();
-        writeAllToDb(); // 实时写入数据库（清空表）
+        execWrite("DELETE FROM employees;", [](sqlite3_stmt *) {}); // 清空表
         cout << "全部员工信息已清空。\n";
     } else {
         cout << "已取消清空。\n";
@@ -651,8 +686,31 @@ static const char *kSelectAll =
     "SELECT name, sex, id, birthday, telephone, number, address, salary, post, department "
     "FROM employees";
 
-// 整表写回数据库（清空后重插，事务保证一致性）。供 save() 与每次增删改的写穿透共用。
-// 返回是否成功；失败时打印错误并回滚。
+// 执行一条写语句(INSERT/UPDATE/DELETE)：打开库、建表、绑定、执行。bind 负责绑定占位符。
+// 用于每次增删改的"增量单行 SQL"写入(数据库为实时数据源)。
+bool EmployeeList::execWrite(const string &sql, const function<void(sqlite3_stmt *)> &bind) const {
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
+        cout << "无法打开数据库 " << fileName_ << "：" << sqlite3_errmsg(db) << "\n";
+        sqlite3_close(db);
+        return false;
+    }
+    ensureSchema(db);
+    sqlite3_stmt *stmt = nullptr;
+    bool ok = false;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        bind(stmt);
+        ok = (sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+    }
+    if (!ok) {
+        cout << "写入数据库失败：" << sqlite3_errmsg(db) << "\n";
+    }
+    sqlite3_close(db);
+    return ok;
+}
+
+// 整表写回数据库（清空后重插，事务保证一致性）。供 save() 与首次迁移使用。
 bool EmployeeList::writeAllToDb() const {
     sqlite3 *db = nullptr;
     if (sqlite3_open(fileName_.c_str(), &db) != SQLITE_OK) {
@@ -665,27 +723,14 @@ bool EmployeeList::writeAllToDb() const {
     sqlite3_exec(db, "DELETE FROM employees;", nullptr, nullptr, nullptr);
 
     sqlite3_stmt *stmt = nullptr;
-    const char *sql = "INSERT INTO employees (number, name, sex, id, birthday, telephone, "
-                      "address, salary, post, department) VALUES (?,?,?,?,?,?,?,?,?,?);";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, kInsertSql, -1, &stmt, nullptr) != SQLITE_OK) {
         cout << "写入数据库失败：" << sqlite3_errmsg(db) << "\n";
         sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(db);
         return false;
     }
     for (const Employee &e : employees_) {
-        // SQLITE_TRANSIENT 让 SQLite 立即复制字符串,避免临时量悬空。
-        const string bd = e.birthday().toString();
-        sqlite3_bind_text(stmt, 1, e.number().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, e.name().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, e.sex().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 4, e.id().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 5, bd.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 6, e.telephone().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 7, e.address().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt, 8, e.salaryValue()); // salary 列为 REAL，按数值存储
-        sqlite3_bind_text(stmt, 9, e.post().c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 10, e.department().c_str(), -1, SQLITE_TRANSIENT);
+        bindEmployee(stmt, e);
         sqlite3_step(stmt);
         sqlite3_reset(stmt);
     }

@@ -284,8 +284,8 @@ flowchart TD
 - [x] 用哈希表(`unordered_map`)为工作证号建索引,查找 / 查重 `O(n²)` → `O(1)` / `O(n)`
 - [x] 数据存储改用 **SQLite**(控制台 C API + 图形界面 `QSQLITE` 驱动,共用 `data/employees.db`,首次自动迁移)
 - [x] 抽出共享**数据库表结构** `common/db_schema.h` 与**字段校验规则** `common/employee_rules.h`,消除两端重复、口径统一
-- [x] 控制台版以**数据库为实时数据源**(增删改写穿透),高级查询下推到 SQL(`WHERE` / `BETWEEN` / `LIKE` + `ORDER BY` + 部门索引)
-- [x] 图形界面:**导出 CSV**、**多级撤销 / 重做**(快捷键 Ctrl+Z / Ctrl+Y)、**记忆列宽与排序状态**(QSettings)
+- [x] 控制台版以**数据库为实时数据源**,增删改用**增量单行 SQL**(`INSERT` / `UPDATE` / `DELETE`)写入,高级查询下推到 SQL(`WHERE` / `BETWEEN` / `LIKE` + `ORDER BY` + 部门索引)
+- [x] 图形界面:**导入 / 导出 CSV**、**多级撤销 / 重做**(快捷键 Ctrl+Z / Ctrl+Y)、**记忆列宽与排序状态**(QSettings)
 - [x] **单元测试**(自带轻量断言框架)+ **GitHub Actions CI** 持续构建
 - [x] 发布 **Windows 绿色免安装包**(Release,解压双击即用)
 
@@ -293,14 +293,11 @@ flowchart TD
 
 **近期**
 - [ ] 图形界面也改为**写穿透**,统一两端会话模型(消除"控制台实时写库 vs 图形界面显式保存"的不对称)
-- [ ] 写库由整表重写改为**增量单行 SQL**(`INSERT` / `UPDATE` / `DELETE`),提升大数据量下的写性能
-- [ ] 支持 **CSV 导入**(目前仅支持导出)
 - [ ] CI 打 tag 时**自动构建并发布 Release 包**,免去手工打包
 
 **进阶**
 - [ ] 大数据量**分页 / 懒加载**,列表与查询全程走 SQL 分页(配合数据库为源)
 - [ ] **登录与角色权限**(只读 / 管理员)+ 操作审计日志
-- [ ] **跨平台 Release**(Linux / macOS 构建产物)并提升测试覆盖(图形界面层 / 覆盖率)
 - [ ] **国际化**:中英文界面切换
 
 ## 📄 许可证

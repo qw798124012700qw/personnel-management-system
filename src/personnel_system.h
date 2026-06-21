@@ -123,7 +123,9 @@ class EmployeeList {
     std::vector<Employee> runQuery(const std::string &whereOrder,
                                    const std::function<void(sqlite3_stmt *)> &bind) const;
     void printQueryResult(const std::vector<Employee> &matches) const; // 统一输出查询结果
-    bool writeAllToDb() const;     // 整表写回数据库（供 save 与每次增删改的写穿透共用）
+    // 执行一条写语句(INSERT/UPDATE/DELETE)，bind 负责绑定占位符；用于增量单行写入。
+    bool execWrite(const std::string &sql, const std::function<void(sqlite3_stmt *)> &bind) const;
+    bool writeAllToDb() const;     // 整表写回数据库（供 save 与首次迁移使用）
     void salaryStatistics() const; // 统计薪水总额/平均/最高/最低
     std::vector<Employee>::iterator
     findByNumber(const std::string &number); // 按工作证号查找（可写）

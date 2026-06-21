@@ -28,6 +28,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QSet>
 #include <QSettings>
 #include <QShortcut>
 #include <QSize>
@@ -484,6 +485,7 @@ void MainWindow::buildButtons() {
     QPushButton *sortNumberButton = new QPushButton("按工号排序", buttonBox);
     QPushButton *sortSalaryButton = new QPushButton("按薪水排序", buttonBox);
     QPushButton *exportButton = new QPushButton("导出CSV", buttonBox);
+    QPushButton *importButton = new QPushButton("导入CSV", buttonBox);
     undoButton = new QPushButton("撤销", buttonBox);
     undoButton->setEnabled(false); // 无可撤销操作时禁用
     redoButton = new QPushButton("重做", buttonBox);
@@ -500,6 +502,7 @@ void MainWindow::buildButtons() {
     setupButton(sortNumberButton, QStyle::SP_ArrowUp, "quiet");
     setupButton(sortSalaryButton, QStyle::SP_ArrowDown, "quiet");
     setupButton(exportButton, QStyle::SP_DialogSaveButton, "quiet");
+    setupButton(importButton, QStyle::SP_DialogOpenButton, "quiet");
     setupButton(undoButton, QStyle::SP_ArrowBack, "quiet");
     setupButton(redoButton, QStyle::SP_ArrowForward, "quiet");
 
@@ -514,6 +517,7 @@ void MainWindow::buildButtons() {
     layout->addWidget(sortNumberButton, 1, 2);
     layout->addWidget(sortSalaryButton, 1, 3);
     layout->addWidget(exportButton, 1, 4);
+    layout->addWidget(importButton, 1, 5);
     layout->addWidget(undoButton, 2, 0);
     layout->addWidget(redoButton, 2, 1);
 
@@ -546,6 +550,10 @@ void MainWindow::buildButtons() {
         refreshTable();
     });
     connect(exportButton, &QPushButton::clicked, this, [this]() { exportCsv(); });
+    connect(importButton, &QPushButton::clicked, this, [this]() {
+        importCsv();
+        refreshTable();
+    });
     connect(undoButton, &QPushButton::clicked, this, [this]() { undo(); });
     connect(redoButton, &QPushButton::clicked, this, [this]() { redo(); });
 }
@@ -1001,6 +1009,115 @@ void MainWindow::exportCsv() {
     }
     file.close();
     statusLabel->setText(QString("已导出 %1 条到 %2").arg(employees.size()).arg(path));
+}
+
+// 解析一行 CSV：正确处理双引号包裹字段与内部 "" 转义。
+static QStringList parseCsvLine(const QString &line) {
+    QStringList fields;
+    QString cur;
+    bool inQuotes = false;
+    for (int i = 0; i < line.size(); ++i) {
+        const QChar c = line[i];
+        if (inQuotes) {
+            if (c == '"') {
+                if (i + 1 < line.size() && line[i + 1] == '"') {
+                    cur += '"'; // "" -> 一个引号
+                    ++i;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                cur += c;
+            }
+        } else if (c == '"') {
+            inQuotes = true;
+        } else if (c == ',') {
+            fields << cur;
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    fields << cur;
+    return fields;
+}
+
+// 从 CSV
+// 文件导入员工（列序与导出一致）。逐行校验(共享规则)、按工作证号去重，跳过表头与非法/重复行。
+void MainWindow::importCsv() {
+    QString path =
+        QFileDialog::getOpenFileName(this, "导入 CSV", QString(), "CSV 文件 (*.csv);;所有文件 (*)");
+    if (path.isEmpty()) {
+        return; // 用户取消
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "导入失败", "无法打开所选文件。");
+        return;
+    }
+    QTextStream in(&file);
+    in.setCodec("UTF-8"); // 兼容带 BOM 的 UTF-8
+
+    QSet<QString> existing; // 已有工作证号，用于去重
+    for (const Employee &e : employees) {
+        existing.insert(e.number);
+    }
+
+    QVector<Employee> imported;
+    int lineNo = 0;
+    int skipped = 0;
+    while (!in.atEnd()) {
+        const QString line = in.readLine();
+        ++lineNo;
+        if (lineNo == 1) {
+            continue; // 跳过表头
+        }
+        if (line.trimmed().isEmpty()) {
+            continue;
+        }
+        const QStringList f = parseCsvLine(line);
+        if (f.size() != 10) {
+            ++skipped;
+            continue;
+        }
+        Employee e;
+        e.name = f[0].trimmed();
+        e.sex = f[1].trimmed();
+        e.id = f[2].trimmed().toUpper();
+        e.birthday = f[3].trimmed();
+        e.telephone = f[4].trimmed();
+        e.number = f[5].trimmed();
+        e.address = f[6].trimmed();
+        e.salary = f[7].trimmed().toDouble();
+        e.post = f[8].trimmed();
+        e.department = f[9].trimmed();
+        // 校验口径与录入一致（共享规则）+ 生日格式 + 去重。
+        const bool valid =
+            !e.name.isEmpty() && !e.number.isEmpty() && !e.address.isEmpty() && !e.post.isEmpty() &&
+            !e.department.isEmpty() && pms::isValidSex(e.sex.toStdString()) &&
+            pms::isValidId(e.id.toStdString()) && pms::isValidPhone(e.telephone.toStdString()) &&
+            pms::isMoney(f[7].trimmed().toStdString()) &&
+            QDate::fromString(e.birthday, "yyyy-MM-dd").isValid() && !existing.contains(e.number);
+        if (!valid) {
+            ++skipped;
+            continue;
+        }
+        existing.insert(e.number);
+        imported.append(e);
+    }
+    file.close();
+
+    if (imported.isEmpty()) {
+        QMessageBox::information(
+            this, "导入CSV",
+            QString("未导入任何记录（跳过 %1 行：格式错误 / 重复 / 校验不通过）。").arg(skipped));
+        return;
+    }
+    pushUndo(); // 改动前留快照,支持撤销
+    employees += imported;
+    dirty = true;
+    refreshTable();
+    statusLabel->setText(QString("已导入 %1 条，跳过 %2 行").arg(imported.size()).arg(skipped));
 }
 
 // 按撤销/重做栈的空满状态刷新两个按钮是否可用。

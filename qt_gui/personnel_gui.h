@@ -77,6 +77,7 @@ class MainWindow : public QMainWindow {
     void loadFromFile();                                     // 从数据文件读取员工
     void saveToFile();                                       // 保存员工到数据文件
     void exportCsv();                                        // 导出为 CSV(可用 Excel 打开)
+    void importCsv();                                        // 从 CSV 导入(校验+去重)
     void pushUndo();                                         // 增/删/改前记录一次快照(并清空重做栈)
     void undo();                                             // 撤销上一次增/删/改(支持多级)
     void redo();                                             // 重做被撤销的操作(支持多级)

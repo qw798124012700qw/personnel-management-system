@@ -20,9 +20,12 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QAction>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QMenu>
+#include <QMenuBar>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
@@ -104,8 +107,13 @@ MainWindow::MainWindow(bool readOnly) : readOnly(readOnly) {
 
     // model 保存真正显示到表格中的数据。
     model = new QStandardItemModel(this);
-    model->setHorizontalHeaderLabels({"姓名", "性别", "身份证号码", "生日", "电话", "工作证号",
-                                      "部门", "职务", "薪水", "家庭地址"});
+    addTr([this] {
+        model->setHorizontalHeaderLabels(
+            english ? QStringList{"Name", "Sex", "ID Card", "Birthday", "Phone", "Emp.No.", "Dept.",
+                                  "Title", "Salary", "Address"}
+                    : QStringList{"姓名", "性别", "身份证号码", "生日", "电话", "工作证号", "部门",
+                                  "职务", "薪水", "家庭地址"});
+    });
 
     // proxy 位于 model 和 table 中间，用于筛选和排序。
     proxy = new QSortFilterProxyModel(this);
@@ -165,6 +173,40 @@ MainWindow::MainWindow(bool readOnly) : readOnly(readOnly) {
     connect(redoSc, &QShortcut::activated, this, [this]() { redo(); });
     auto *redoSc2 = new QShortcut(QKeySequence("Ctrl+Shift+Z"), this);
     connect(redoSc2, &QShortcut::activated, this, [this]() { redo(); });
+
+    // 语言菜单：中文 / English。切换后调用 retranslateUi() 统一刷新已注册控件。
+    QMenu *langMenu = menuBar()->addMenu(QString::fromUtf8("语言 / Language"));
+    QAction *zhAct = langMenu->addAction(QString::fromUtf8("中文"));
+    QAction *enAct = langMenu->addAction("English");
+    connect(zhAct, &QAction::triggered, this, [this]() {
+        english = false;
+        retranslateUi();
+    });
+    connect(enAct, &QAction::triggered, this, [this]() {
+        english = true;
+        retranslateUi();
+    });
+    retranslateUi(); // 按初始语言(中文)统一设置一次标题等
+}
+
+// 按当前语言二选一返回文字。
+QString MainWindow::tr2(const char *zh, const char *en) const {
+    return english ? QString::fromUtf8(en) : QString::fromUtf8(zh);
+}
+
+// 注册一个"刷新某控件文字"的回调，并立即按当前语言应用一次。
+void MainWindow::addTr(const std::function<void()> &fn) {
+    translators_.append(fn);
+    fn();
+}
+
+// 切换语言时统一刷新：窗口标题 + 全部已注册控件(含表头、汇总)。
+void MainWindow::retranslateUi() {
+    setWindowTitle(tr2("人事管理系统 - Qt 图形界面", "Personnel Management System") + " [" +
+                   (readOnly ? tr2("只读访客", "Read-only") : tr2("管理员", "Admin")) + "]");
+    for (const auto &fn : translators_) {
+        fn();
+    }
 }
 
 // 关闭窗口时，若存在未保存的改动，提示用户 保存 / 放弃 / 取消。
@@ -347,6 +389,7 @@ QWidget *MainWindow::buildHeader() {
 
     QLabel *title = new QLabel("人事管理系统", header);
     title->setObjectName("headerTitle");
+    addTr([this, title] { title->setText(tr2("人事管理系统", "Personnel Management System")); });
     QLabel *meta = new QLabel("Personnel Management", header);
     meta->setObjectName("headerMeta");
     titleLayout->addWidget(title);
@@ -355,6 +398,8 @@ QWidget *MainWindow::buildHeader() {
     summaryLabel = new QLabel("0 条记录", header);
     summaryLabel->setObjectName("summaryBadge");
     summaryLabel->setAlignment(Qt::AlignCenter);
+    // 汇总徽章按当前语言显示当前记录数(随语言切换刷新)。
+    addTr([this] { summaryLabel->setText(tr2("%1 条记录", "%1 records").arg(employees.size())); });
 
     layout->addLayout(titleLayout, 1);
     layout->addWidget(summaryLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
@@ -401,34 +446,53 @@ void MainWindow::buildForm() {
     addressEdit->setPlaceholderText("家庭地址");
     addressEdit->setClearButtonEnabled(true);
 
+    // 国际化：分组标题与各输入框占位符的中英文（性别下拉的文字是数据，不翻译）。
+    addTr([this] { formBox->setTitle(tr2("员工信息", "Employee")); });
+    addTr([this] { nameEdit->setPlaceholderText(tr2("姓名", "Name")); });
+    addTr([this] {
+        idEdit->setPlaceholderText(tr2("15 位或 18 位身份证号码", "15/18-digit ID card"));
+    });
+    addTr([this] { telephoneEdit->setPlaceholderText(tr2("电话号码", "Phone")); });
+    addTr([this] { numberEdit->setPlaceholderText(tr2("工作证号", "Employee No.")); });
+    addTr([this] { departmentEdit->setPlaceholderText(tr2("部门", "Department")); });
+    addTr([this] { postEdit->setPlaceholderText(tr2("职务", "Title")); });
+    addTr([this] { addressEdit->setPlaceholderText(tr2("家庭地址", "Address")); });
+
     // 使用正则表达式做简单输入限制，减少明显错误输入。
     idEdit->setValidator(
         new QRegularExpressionValidator(QRegularExpression("[0-9]{15}|[0-9]{17}[0-9Xx]"), idEdit));
     telephoneEdit->setValidator(
         new QRegularExpressionValidator(QRegularExpression("[0-9-]{7,15}"), telephoneEdit));
 
-    layout->addWidget(new QLabel("姓名"), 0, 0);
+    // 生成带中英文翻译注册的字段标签。
+    auto makeLabel = [this](const char *zh, const char *en) {
+        QLabel *lb = new QLabel(QString::fromUtf8(zh));
+        addTr([this, lb, zh, en] { lb->setText(tr2(zh, en)); });
+        return lb;
+    };
+
+    layout->addWidget(makeLabel("姓名", "Name"), 0, 0);
     layout->addWidget(nameEdit, 0, 1);
-    layout->addWidget(new QLabel("性别"), 0, 2);
+    layout->addWidget(makeLabel("性别", "Sex"), 0, 2);
     layout->addWidget(sexBox, 0, 3);
-    layout->addWidget(new QLabel("身份证号码"), 0, 4);
+    layout->addWidget(makeLabel("身份证号码", "ID Card"), 0, 4);
     layout->addWidget(idEdit, 0, 5);
 
-    layout->addWidget(new QLabel("生日"), 1, 0);
+    layout->addWidget(makeLabel("生日", "Birthday"), 1, 0);
     layout->addWidget(birthdayEdit, 1, 1);
-    layout->addWidget(new QLabel("电话"), 1, 2);
+    layout->addWidget(makeLabel("电话", "Phone"), 1, 2);
     layout->addWidget(telephoneEdit, 1, 3);
-    layout->addWidget(new QLabel("工作证号"), 1, 4);
+    layout->addWidget(makeLabel("工作证号", "Emp. No."), 1, 4);
     layout->addWidget(numberEdit, 1, 5);
 
-    layout->addWidget(new QLabel("部门"), 2, 0);
+    layout->addWidget(makeLabel("部门", "Department"), 2, 0);
     layout->addWidget(departmentEdit, 2, 1);
-    layout->addWidget(new QLabel("职务"), 2, 2);
+    layout->addWidget(makeLabel("职务", "Title"), 2, 2);
     layout->addWidget(postEdit, 2, 3);
-    layout->addWidget(new QLabel("薪水"), 2, 4);
+    layout->addWidget(makeLabel("薪水", "Salary"), 2, 4);
     layout->addWidget(salarySpin, 2, 5);
 
-    layout->addWidget(new QLabel("家庭地址"), 3, 0);
+    layout->addWidget(makeLabel("家庭地址", "Address"), 3, 0);
     layout->addWidget(addressEdit, 3, 1, 1, 5);
 }
 
@@ -451,7 +515,23 @@ QWidget *MainWindow::buildSearchBox() {
     setupButton(clearFilterButton, QStyle::SP_DialogResetButton, "quiet");
     setupButton(salaryRangeButton, QStyle::SP_FileDialogInfoView, "primary");
 
-    layout->addWidget(new QLabel("查询方式"), 0, 0);
+    QLabel *queryModeLabel = new QLabel("查询方式", box);
+
+    // 国际化：查询区标题、查询方式下拉(按下标筛选,翻译显示文字安全)、占位符与按钮。
+    addTr([this, box] { box->setTitle(tr2("查询与筛选", "Search & Filter")); });
+    addTr([this, queryModeLabel] { queryModeLabel->setText(tr2("查询方式", "Search by")); });
+    addTr([this] {
+        const QStringList zh{"全部字段关键字", "姓名", "部门", "职务", "工作证号"};
+        const QStringList en{"All fields", "Name", "Department", "Title", "Emp. No."};
+        for (int i = 0; i < queryModeBox->count(); ++i) {
+            queryModeBox->setItemText(i, english ? en.value(i) : zh.value(i));
+        }
+    });
+    addTr([this] { keywordEdit->setPlaceholderText(tr2("输入关键字", "Enter keyword")); });
+    addTr([=] { clearFilterButton->setText(tr2("清除筛选", "Clear")); });
+    addTr([=] { salaryRangeButton->setText(tr2("薪水区间查询", "Salary Range")); });
+
+    layout->addWidget(queryModeLabel, 0, 0);
     layout->addWidget(queryModeBox, 0, 1);
     layout->addWidget(keywordEdit, 0, 2);
     layout->addWidget(clearFilterButton, 0, 3);
@@ -496,6 +576,24 @@ void MainWindow::buildButtons() {
     undoButton->setEnabled(false); // 无可撤销操作时禁用
     redoButton = new QPushButton("重做", buttonBox);
     redoButton->setEnabled(false); // 无可重做操作时禁用
+
+    // 国际化：注册各按钮与分组标题的中英文字（语言切换时统一刷新）。
+    addTr([this] { buttonBox->setTitle(tr2("操作", "Actions")); });
+    addTr([=] { addButton->setText(tr2("添加", "Add")); });
+    addTr([=] { updateButton->setText(tr2("修改", "Update")); });
+    addTr([=] { deleteButton->setText(tr2("删除", "Delete")); });
+    addTr([=] { clearFormButton->setText(tr2("清空表单", "Clear Form")); });
+    addTr([=] { loadButton->setText(tr2("读取文件", "Reload")); });
+    addTr([=] { saveButton->setText(tr2("保存文件", "Save")); });
+    addTr([=] { departmentStatButton->setText(tr2("部门统计", "By Dept.")); });
+    addTr([=] { salaryStatButton->setText(tr2("薪水统计", "Salary Stats")); });
+    addTr([=] { sortNumberButton->setText(tr2("按工号排序", "Sort by No.")); });
+    addTr([=] { sortSalaryButton->setText(tr2("按薪水排序", "Sort by Salary")); });
+    addTr([=] { exportButton->setText(tr2("导出CSV", "Export CSV")); });
+    addTr([=] { importButton->setText(tr2("导入CSV", "Import CSV")); });
+    addTr([=] { auditButton->setText(tr2("审计日志", "Audit Log")); });
+    addTr([this] { undoButton->setText(tr2("撤销", "Undo")); });
+    addTr([this] { redoButton->setText(tr2("重做", "Redo")); });
 
     setupButton(addButton, QStyle::SP_DialogApplyButton, "primary");
     setupButton(updateButton, QStyle::SP_BrowserReload, "primary");
@@ -740,9 +838,9 @@ void MainWindow::refreshTable() {
         model->appendRow(row);
     }
     applyFilter();
-    QString countText = QString("%1 条记录").arg(employees.size());
-    summaryLabel->setText(countText);
-    statusLabel->setText(QString("当前共有 %1 条员工信息").arg(employees.size()));
+    summaryLabel->setText(tr2("%1 条记录", "%1 records").arg(employees.size()));
+    statusLabel->setText(
+        tr2("当前共有 %1 条员工信息", "%1 employees in total").arg(employees.size()));
 }
 
 // 普通文本单元格。UserRole 用于排序时取原始值。

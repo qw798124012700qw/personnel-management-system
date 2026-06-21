@@ -9,6 +9,8 @@
 #include <QStyle>
 #include <QVector>
 
+#include <functional>
+
 // 前置声明用到的 Qt 控件类型，减少头文件依赖、加快编译。
 class QCloseEvent;
 class QComboBox;
@@ -88,6 +90,10 @@ class MainWindow : public QMainWindow {
     void saveTableState() const;  // 退出时保存列宽与排序状态
     void logAudit(const QString &action, const QString &detail); // 写一条审计日志
     void showAuditLog();                                         // 弹窗查看最近审计日志
+    // 国际化：注册一个"刷新某控件文字"的回调；retranslateUi() 切换语言时统一调用。
+    void addTr(const std::function<void()> &fn);
+    void retranslateUi();                              // 按当前语言刷新全部已注册控件文字
+    QString tr2(const char *zh, const char *en) const; // 按当前语言二选一
 
     QTableView *table = nullptr;            // 员工表格视图
     QStandardItemModel *model = nullptr;    // 表格数据模型
@@ -111,14 +117,16 @@ class MainWindow : public QMainWindow {
     QLineEdit *keywordEdit = nullptr;     // 筛选关键字输入
     QComboBox *queryModeBox = nullptr;    // 筛选方式下拉
 
-    QVector<Employee> employees;          // 内存中的全部员工数据
-    QVector<QVector<Employee>> undoStack; // 撤销栈：每次增/删/改前压入一份快照(支持多级)
-    QVector<QVector<Employee>> redoStack; // 重做栈：撤销时把当前状态压入
-    QPushButton *undoButton = nullptr;    // 撤销按钮(随栈空/非空启用或禁用)
-    QPushButton *redoButton = nullptr;    // 重做按钮(随栈空/非空启用或禁用)
-    bool dirty = false;                   // 是否有未保存改动（增删改后置 true，存/读后清零）
-    bool readOnly = false;                // 只读访客：禁用所有写操作
-    QString roleName;                     // 当前身份名称(写入审计日志)
+    QVector<Employee> employees;                 // 内存中的全部员工数据
+    QVector<QVector<Employee>> undoStack;        // 撤销栈：每次增/删/改前压入一份快照(支持多级)
+    QVector<QVector<Employee>> redoStack;        // 重做栈：撤销时把当前状态压入
+    QPushButton *undoButton = nullptr;           // 撤销按钮(随栈空/非空启用或禁用)
+    QPushButton *redoButton = nullptr;           // 重做按钮(随栈空/非空启用或禁用)
+    bool dirty = false;                          // 是否有未保存改动（增删改后置 true，存/读后清零）
+    bool readOnly = false;                       // 只读访客：禁用所有写操作
+    QString roleName;                            // 当前身份名称(写入审计日志)
+    bool english = false;                        // 当前界面语言：false=中文, true=English
+    QVector<std::function<void()>> translators_; // 各控件的"按当前语言刷新文字"回调
     // 数据库路径在构造时由 resolveDataFile() 相对 exe 位置智能定位（兼容开发布局与便携包）。
     QString dataFile;
 };

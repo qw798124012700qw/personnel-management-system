@@ -144,6 +144,7 @@ flowchart TB
 
 ```mermaid
 classDiagram
+    direction LR
     class Date {
       -int year_
       -int month_

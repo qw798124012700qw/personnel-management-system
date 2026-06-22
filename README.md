@@ -17,7 +17,7 @@
 ![Qt](https://img.shields.io/badge/Qt-5-41CD52?style=flat-square&logo=qt&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/Source-Windows%20%7C%20Linux%20%7C%20macOS-555?style=flat-square)
 
 ### [⬇️ 下载 Windows 免安装版](https://github.com/qw798124012700qw/personnel-management-system/releases/latest) &nbsp;·&nbsp; 解压双击即用,无需安装 Qt
 
@@ -219,7 +219,7 @@ classDiagram
 
 ## 🚀 快速开始
 
-提供**三种**上手方式,按需选择:
+提供**三种**上手方式,按需选择。源码为可移植 **C++17**(Windows 专属代码已用 `#ifdef _WIN32` 隔离),在 Windows / Linux / macOS 均可编译(CI 已在 Ubuntu 实测);**预编译免安装包目前仅提供 Windows 版**。
 
 ### ① 直接下载(最快,无需任何环境)
 

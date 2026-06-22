@@ -1,0 +1,75 @@
+name: Release
+
+# 推送形如 v1.2.3 的 tag 时，自动在 Windows 上构建绿色免安装包并发布到对应 Release。
+# 注意：本工作流只有在推 tag 时才会运行，无法在普通 push / 本机验证，首次使用建议先推一个测试 tag 观察。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # 允许创建 Release 并上传附件
+
+jobs:
+  build-windows-package:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 MSYS2 + clang64 工具链(Qt5 / SQLite)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-qt5-base
+            mingw-w64-clang-x86_64-sqlite3
+            mingw-w64-clang-x86_64-make
+
+      - name: 构建控制台版与图形界面版
+        shell: msys2 {0}
+        run: |
+          clang++ -std=c++17 -O2 src/main.cpp src/personnel_system.cpp -o personnel_system.exe -lsqlite3
+          cd qt_gui && qmake-qt5 personnel_gui.pro && mingw32-make && cd ..
+
+      - name: 组装绿色免安装包(用 ldd 收齐 DLL 依赖)
+        shell: msys2 {0}
+        run: |
+          PKG="人事管理系统-${GITHUB_REF_NAME}"
+          mkdir -p "dist/$PKG/platforms" "dist/$PKG/sqldrivers" "dist/$PKG/data"
+          cp qt_gui/release/personnel_gui.exe "dist/$PKG/人事管理系统.exe"
+          cp personnel_system.exe "dist/$PKG/人事管理系统-控制台版.exe"
+          QTPLUG="/clang64/share/qt5/plugins"
+          cp "$QTPLUG/platforms/qwindows.dll" "dist/$PKG/platforms/"
+          cp "$QTPLUG/sqldrivers/qsqlite.dll" "dist/$PKG/sqldrivers/"
+          cp data/employees.txt "dist/$PKG/data/"
+          cp 使用手册.md "dist/$PKG/" 2>/dev/null || true
+          collect() { ldd "$1" 2>/dev/null | awk '/clang64/{print $3}'; }
+          { collect "dist/$PKG/人事管理系统.exe"; \
+            collect "dist/$PKG/人事管理系统-控制台版.exe"; \
+            collect "$QTPLUG/platforms/qwindows.dll"; \
+            collect "$QTPLUG/sqldrivers/qsqlite.dll"; } \
+            | sort -u | while read -r f; do [ -f "$f" ] && cp -n "$f" "dist/$PKG/"; done
+
+      - name: 打包 ZIP
+        shell: pwsh
+        run: |
+          $pkg = "人事管理系统-$env:GITHUB_REF_NAME"
+          $zip = "PersonnelManagementSystem-$env:GITHUB_REF_NAME-windows-x64.zip"
+          Compress-Archive -Path "dist/$pkg" -DestinationPath $zip -Force
+
+      - name: 发布到 Release(已存在则替换附件,否则新建)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $zip = "PersonnelManagementSystem-$tag-windows-x64.zip"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip --clobber
+          } else {
+            gh release create $tag $zip --title "人事管理系统 $tag" --notes "自动构建的 Windows 绿色免安装包，解压双击 人事管理系统.exe 即用（无需安装 Qt）。"
+          }
